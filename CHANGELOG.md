@@ -137,23 +137,13 @@ All notable changes to the Midnight Discord Bot.
 ## Future Roadmap
 
 ### Planned Features
-- [ ] Poll analytics and statistics
-- [ ] Poll templates for common questions
-- [ ] Scheduled polls
-- [ ] Poll notifications for roles
 - [ ] Database migration (MongoDB/PostgreSQL)
 - [ ] Redis caching for better performance
 - [ ] More automod features (link whitelist, emoji spam)
-- [ ] Economy system
-- [ ] Level/XP system
-- [ ] Custom commands
 
 ### Under Consideration
-- [ ] Music commands
-- [ ] Mini-games
 - [ ] Giveaway system
 - [ ] Reaction roles
-- [ ] Birthday announcements
 - [ ] Server statistics dashboard
 
 ---

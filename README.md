@@ -221,7 +221,7 @@ The bot uses JSON files for data storage:
 - ✅ Improved user experience with familiar Discord UI
 - ✅ Better performance and reliability
 
-See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed changelog.
+See [CHANGELOG.md](CHANGELOG.md) for detailed changelog.
 
 ## 🛠️ Development
 
