@@ -1,22 +1,22 @@
-'use strict';
+"use strict";
 
-const Database = require('better-sqlite3');
-const path     = require('path');
-const fs       = require('fs');
+const Database = require("better-sqlite3");
+const path = require("path");
+const fs = require("fs");
 
 class AutomodDatabase {
-    constructor() {
-        const dataDir = path.join(__dirname, '../data');
-        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  constructor() {
+    const dataDir = path.join(__dirname, "../data");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-        this.db = new Database(path.join(dataDir, 'automod.db'));
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('foreign_keys = ON');
-        this._initTables();
-    }
+    this.db = new Database(path.join(dataDir, "automod.db"));
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("foreign_keys = ON");
+    this._initTables();
+  }
 
-    _initTables() {
-        this.db.exec(`
+  _initTables() {
+    this.db.exec(`
             CREATE TABLE IF NOT EXISTS automod_rules (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 guild_id          TEXT    NOT NULL,
@@ -96,189 +96,271 @@ class AutomodDatabase {
             CREATE INDEX IF NOT EXISTS idx_badwords_guild        ON automod_badwords(guild_id);
             CREATE INDEX IF NOT EXISTS idx_tracking_guild_user   ON message_tracking(guild_id, user_id);
         `);
-    }
+  }
 
-    // -------------------------------------------------------------------------
-    // Rules
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Rules
+  // -------------------------------------------------------------------------
 
-    createRule(guildId, ruleType, config) {
-        return this.db.prepare(`
+  createRule(guildId, ruleType, config) {
+    return this.db
+      .prepare(
+        `
             INSERT INTO automod_rules
                 (guild_id, rule_type, enabled, threshold, threshold_seconds,
                  action, violation_count, mute_duration, custom_message, log_channel_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-            guildId,
-            ruleType,
-            config.enabled ? 1 : 0,
-            config.threshold         ?? null,
-            config.thresholdSeconds  ?? null,
-            config.action,
-            config.violationCount    ?? 1,
-            config.muteDuration      ?? null,
-            config.customMessage     ?? null,
-            config.logChannelId      ?? null
-        );
+        `,
+      )
+      .run(
+        guildId,
+        ruleType,
+        config.enabled ? 1 : 0,
+        config.threshold ?? null,
+        config.thresholdSeconds ?? null,
+        config.action,
+        config.violationCount ?? 1,
+        config.muteDuration ?? null,
+        config.customMessage ?? null,
+        config.logChannelId ?? null,
+      );
+  }
+
+  getRules(guildId) {
+    return this.db
+      .prepare("SELECT * FROM automod_rules WHERE guild_id = ?")
+      .all(guildId);
+  }
+
+  getRuleById(ruleId) {
+    return (
+      this.db.prepare("SELECT * FROM automod_rules WHERE id = ?").get(ruleId) ??
+      null
+    );
+  }
+
+  updateRule(ruleId, config) {
+    const sets = [];
+    const values = [];
+
+    if (config.enabled !== undefined) {
+      sets.push("enabled = ?");
+      values.push(config.enabled ? 1 : 0);
+    }
+    if (config.threshold !== undefined) {
+      sets.push("threshold = ?");
+      values.push(config.threshold);
+    }
+    if (config.action !== undefined) {
+      sets.push("action = ?");
+      values.push(config.action);
+    }
+    if (config.violationCount !== undefined) {
+      sets.push("violation_count = ?");
+      values.push(config.violationCount);
+    }
+    if (config.muteDuration !== undefined) {
+      sets.push("mute_duration = ?");
+      values.push(config.muteDuration);
     }
 
-    getRules(guildId) {
-        return this.db.prepare('SELECT * FROM automod_rules WHERE guild_id = ?').all(guildId);
-    }
+    sets.push("updated_at = ?");
+    values.push(Math.floor(Date.now() / 1000));
+    values.push(ruleId);
 
-    getRuleById(ruleId) {
-        return this.db.prepare('SELECT * FROM automod_rules WHERE id = ?').get(ruleId) ?? null;
-    }
+    return this.db
+      .prepare(`UPDATE automod_rules SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...values);
+  }
 
-    updateRule(ruleId, config) {
-        const sets   = [];
-        const values = [];
+  deleteRule(ruleId) {
+    return this.db
+      .prepare("DELETE FROM automod_rules WHERE id = ?")
+      .run(ruleId);
+  }
 
-        if (config.enabled !== undefined)        { sets.push('enabled = ?');         values.push(config.enabled ? 1 : 0); }
-        if (config.threshold !== undefined)       { sets.push('threshold = ?');        values.push(config.threshold); }
-        if (config.action !== undefined)          { sets.push('action = ?');           values.push(config.action); }
-        if (config.violationCount !== undefined)  { sets.push('violation_count = ?');  values.push(config.violationCount); }
-        if (config.muteDuration !== undefined)    { sets.push('mute_duration = ?');    values.push(config.muteDuration); }
+  // -------------------------------------------------------------------------
+  // Filters
+  // -------------------------------------------------------------------------
 
-        sets.push('updated_at = ?');
-        values.push(Math.floor(Date.now() / 1000));
-        values.push(ruleId);
-
-        return this.db.prepare(`UPDATE automod_rules SET ${sets.join(', ')} WHERE id = ?`).run(...values);
-    }
-
-    deleteRule(ruleId) {
-        return this.db.prepare('DELETE FROM automod_rules WHERE id = ?').run(ruleId);
-    }
-
-    // -------------------------------------------------------------------------
-    // Filters
-    // -------------------------------------------------------------------------
-
-    addFilter(ruleId, filterType, targetType, targetId) {
-        return this.db.prepare(`
+  addFilter(ruleId, filterType, targetType, targetId) {
+    return this.db
+      .prepare(
+        `
             INSERT INTO automod_filters (rule_id, filter_type, target_type, target_id)
             VALUES (?, ?, ?, ?)
-        `).run(ruleId, filterType, targetType, targetId);
-    }
+        `,
+      )
+      .run(ruleId, filterType, targetType, targetId);
+  }
 
-    getFilters(ruleId) {
-        return this.db.prepare('SELECT * FROM automod_filters WHERE rule_id = ?').all(ruleId);
-    }
+  getFilters(ruleId) {
+    return this.db
+      .prepare("SELECT * FROM automod_filters WHERE rule_id = ?")
+      .all(ruleId);
+  }
 
-    // -------------------------------------------------------------------------
-    // Bad Words
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Bad Words
+  // -------------------------------------------------------------------------
 
-    addBadWord(guildId, word, matchType = 'contains') {
-        return this.db.prepare(`
+  addBadWord(guildId, word, matchType = "contains") {
+    return this.db
+      .prepare(
+        `
             INSERT INTO automod_badwords (guild_id, word, match_type)
             VALUES (?, ?, ?)
             ON CONFLICT(guild_id, word) DO UPDATE SET match_type = excluded.match_type
-        `).run(guildId, word.toLowerCase(), matchType);
-    }
+        `,
+      )
+      .run(guildId, word.toLowerCase(), matchType);
+  }
 
-    getBadWords(guildId) {
-        return this.db.prepare('SELECT * FROM automod_badwords WHERE guild_id = ?').all(guildId);
-    }
+  getBadWords(guildId) {
+    return this.db
+      .prepare("SELECT * FROM automod_badwords WHERE guild_id = ?")
+      .all(guildId);
+  }
 
-    removeBadWord(guildId, word) {
-        return this.db.prepare('DELETE FROM automod_badwords WHERE guild_id = ? AND word = ?').run(guildId, word.toLowerCase());
-    }
+  removeBadWord(guildId, word) {
+    return this.db
+      .prepare("DELETE FROM automod_badwords WHERE guild_id = ? AND word = ?")
+      .run(guildId, word.toLowerCase());
+  }
 
-    // -------------------------------------------------------------------------
-    // Links
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Links
+  // -------------------------------------------------------------------------
 
-    addAllowedLink(guildId, domain) {
-        return this.db.prepare(`
+  addAllowedLink(guildId, domain) {
+    return this.db
+      .prepare(
+        `
             INSERT OR IGNORE INTO automod_allowed_links (guild_id, domain) VALUES (?, ?)
-        `).run(guildId, domain);
-    }
+        `,
+      )
+      .run(guildId, domain);
+  }
 
-    getAllowedLinks(guildId) {
-        return this.db.prepare('SELECT domain FROM automod_allowed_links WHERE guild_id = ?').all(guildId).map(r => r.domain);
-    }
+  getAllowedLinks(guildId) {
+    return this.db
+      .prepare("SELECT domain FROM automod_allowed_links WHERE guild_id = ?")
+      .all(guildId)
+      .map((r) => r.domain);
+  }
 
-    addBlockedLink(guildId, domain) {
-        return this.db.prepare(`
+  addBlockedLink(guildId, domain) {
+    return this.db
+      .prepare(
+        `
             INSERT OR IGNORE INTO automod_blocked_links (guild_id, domain) VALUES (?, ?)
-        `).run(guildId, domain);
-    }
+        `,
+      )
+      .run(guildId, domain);
+  }
 
-    getBlockedLinks(guildId) {
-        return this.db.prepare('SELECT domain FROM automod_blocked_links WHERE guild_id = ?').all(guildId).map(r => r.domain);
-    }
+  getBlockedLinks(guildId) {
+    return this.db
+      .prepare("SELECT domain FROM automod_blocked_links WHERE guild_id = ?")
+      .all(guildId)
+      .map((r) => r.domain);
+  }
 
-    // -------------------------------------------------------------------------
-    // Violations
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Violations
+  // -------------------------------------------------------------------------
 
-    addViolation(guildId, userId, ruleType) {
-        return this.db.prepare(`
+  addViolation(guildId, userId, ruleType) {
+    return this.db
+      .prepare(
+        `
             INSERT INTO automod_violations (guild_id, user_id, rule_type) VALUES (?, ?, ?)
-        `).run(guildId, userId, ruleType);
-    }
+        `,
+      )
+      .run(guildId, userId, ruleType);
+  }
 
-    getViolationCount(guildId, userId, ruleType) {
-        const since = Math.floor(Date.now() / 1000) - 300; // 5-minute window
-        return this.db.prepare(`
+  getViolationCount(guildId, userId, ruleType) {
+    const since = Math.floor(Date.now() / 1000) - 300; // 5-minute window
+    return this.db
+      .prepare(
+        `
             SELECT COUNT(*) AS count FROM automod_violations
             WHERE guild_id = ? AND user_id = ? AND rule_type = ? AND timestamp > ?
-        `).get(guildId, userId, ruleType, since).count;
-    }
+        `,
+      )
+      .get(guildId, userId, ruleType, since).count;
+  }
 
-    cleanExpiredViolations() {
-        const since = Math.floor(Date.now() / 1000) - 300;
-        return this.db.prepare('DELETE FROM automod_violations WHERE timestamp < ?').run(since);
-    }
+  cleanExpiredViolations() {
+    const since = Math.floor(Date.now() / 1000) - 300;
+    return this.db
+      .prepare("DELETE FROM automod_violations WHERE timestamp < ?")
+      .run(since);
+  }
 
-    // -------------------------------------------------------------------------
-    // Message Tracking
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Message Tracking
+  // -------------------------------------------------------------------------
 
-    trackMessage(guildId, userId, channelId, messageType) {
-        return this.db.prepare(`
+  trackMessage(guildId, userId, channelId, messageType) {
+    return this.db
+      .prepare(
+        `
             INSERT INTO message_tracking (guild_id, user_id, channel_id, message_type)
             VALUES (?, ?, ?, ?)
-        `).run(guildId, userId, channelId, messageType);
-    }
+        `,
+      )
+      .run(guildId, userId, channelId, messageType);
+  }
 
-    getRecentMessages(guildId, userId, messageType, seconds) {
-        const since = Math.floor(Date.now() / 1000) - seconds;
-        return this.db.prepare(`
+  getRecentMessages(guildId, userId, messageType, seconds) {
+    const since = Math.floor(Date.now() / 1000) - seconds;
+    return this.db
+      .prepare(
+        `
             SELECT * FROM message_tracking
             WHERE guild_id = ? AND user_id = ? AND message_type = ? AND timestamp > ?
-        `).all(guildId, userId, messageType, since);
-    }
+        `,
+      )
+      .all(guildId, userId, messageType, since);
+  }
 
-    cleanOldTracking() {
-        const since = Math.floor(Date.now() / 1000) - 3600; // 1-hour window
-        return this.db.prepare('DELETE FROM message_tracking WHERE timestamp < ?').run(since);
-    }
+  cleanOldTracking() {
+    const since = Math.floor(Date.now() / 1000) - 3600; // 1-hour window
+    return this.db
+      .prepare("DELETE FROM message_tracking WHERE timestamp < ?")
+      .run(since);
+  }
 
-    // -------------------------------------------------------------------------
-    // Settings
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Settings
+  // -------------------------------------------------------------------------
 
-    /**
-     * Returns settings for a guild.
-     * ignored_roles and ignored_channels are returned as string arrays.
-     */
-    getSettings(guildId) {
-        const row = this.db.prepare('SELECT * FROM automod_settings WHERE guild_id = ?').get(guildId);
-        if (!row) return null;
-        row.ignored_roles    = row.ignored_roles    ? row.ignored_roles.split(',')    : [];
-        row.ignored_channels = row.ignored_channels ? row.ignored_channels.split(',') : [];
-        return row;
-    }
+  /**
+   * Returns settings for a guild.
+   * ignored_roles and ignored_channels are returned as string arrays.
+   */
+  getSettings(guildId) {
+    const row = this.db
+      .prepare("SELECT * FROM automod_settings WHERE guild_id = ?")
+      .get(guildId);
+    if (!row) return null;
+    row.ignored_roles = row.ignored_roles ? row.ignored_roles.split(",") : [];
+    row.ignored_channels = row.ignored_channels
+      ? row.ignored_channels.split(",")
+      : [];
+    return row;
+  }
 
-    /**
-     * Upserts settings for a guild.
-     * Expects: { defaultLogChannel?, ignoredRoles?, ignoredChannels? }
-     */
-    updateSettings(guildId, settings) {
-        return this.db.prepare(`
+  /**
+   * Upserts settings for a guild.
+   * Expects: { defaultLogChannel?, ignoredRoles?, ignoredChannels? }
+   */
+  updateSettings(guildId, settings) {
+    return this.db
+      .prepare(
+        `
             INSERT INTO automod_settings (guild_id, default_log_channel, ignored_roles, ignored_channels, updated_at)
             VALUES (?, ?, ?, ?, strftime('%s','now'))
             ON CONFLICT(guild_id) DO UPDATE SET
@@ -286,13 +368,19 @@ class AutomodDatabase {
                 ignored_roles       = excluded.ignored_roles,
                 ignored_channels    = excluded.ignored_channels,
                 updated_at          = excluded.updated_at
-        `).run(
-            guildId,
-            settings.defaultLogChannel ?? null,
-            Array.isArray(settings.ignoredRoles)    ? settings.ignoredRoles.join(',')    : '',
-            Array.isArray(settings.ignoredChannels) ? settings.ignoredChannels.join(',') : ''
-        );
-    }
+        `,
+      )
+      .run(
+        guildId,
+        settings.defaultLogChannel ?? null,
+        Array.isArray(settings.ignoredRoles)
+          ? settings.ignoredRoles.join(",")
+          : "",
+        Array.isArray(settings.ignoredChannels)
+          ? settings.ignoredChannels.join(",")
+          : "",
+      );
+  }
 }
 
 module.exports = new AutomodDatabase();

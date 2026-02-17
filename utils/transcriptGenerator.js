@@ -1,6 +1,6 @@
-'use strict';
+"use strict";
 
-const tdb = require('./ticketDatabase');
+const tdb = require("./ticketDatabase");
 
 /**
  * Generates a styled HTML transcript from a ticket's message history.
@@ -10,78 +10,87 @@ const tdb = require('./ticketDatabase');
  *   - fromDatabase: uses the DB-tracked message log (fallback when channel is deleted)
  */
 class TranscriptGenerator {
+  /**
+   * @param {import('discord.js').TextChannel|import('discord.js').ThreadChannel} channel
+   * @param {object} ticket
+   * @param {import('discord.js').Guild} guild
+   * @returns {Promise<Buffer>}
+   */
+  async fromChannel(channel, ticket, guild) {
+    const messages = await this._fetchAllMessages(channel);
+    return this._buildHTML(messages, ticket, guild);
+  }
 
-    /**
-     * @param {import('discord.js').TextChannel|import('discord.js').ThreadChannel} channel
-     * @param {object} ticket
-     * @param {import('discord.js').Guild} guild
-     * @returns {Promise<Buffer>}
-     */
-    async fromChannel(channel, ticket, guild) {
-        const messages = await this._fetchAllMessages(channel);
-        return this._buildHTML(messages, ticket, guild);
+  /**
+   * @param {object} ticket
+   * @param {import('discord.js').Guild} guild
+   * @returns {Buffer}
+   */
+  fromDatabase(ticket, guild) {
+    const rows = tdb.getTicketMessages(ticket.id);
+    const messages = rows.map((r) => ({
+      id: r.message_id,
+      authorId: r.author_id,
+      authorTag: r.author_tag,
+      authorAvatar: null,
+      isBot: r.author_bot === 1,
+      content: r.content,
+      attachments: JSON.parse(r.attachments || "[]"),
+      embedCount: r.embeds,
+      timestamp: new Date(r.created_at * 1000),
+    }));
+    return this._buildHTML(messages, ticket, guild);
+  }
+
+  // -------------------------------------------------------------------------
+
+  async _fetchAllMessages(channel) {
+    const all = [];
+    let lastId = null;
+
+    // Discord returns up to 100 messages per request; paginate until exhausted.
+    while (true) {
+      const batch = await channel.messages.fetch({
+        limit: 100,
+        ...(lastId && { before: lastId }),
+      });
+      if (batch.size === 0) break;
+      all.push(...batch.values());
+      lastId = batch.last().id;
+      if (batch.size < 100) break;
     }
 
-    /**
-     * @param {object} ticket
-     * @param {import('discord.js').Guild} guild
-     * @returns {Buffer}
-     */
-    fromDatabase(ticket, guild) {
-        const rows     = tdb.getTicketMessages(ticket.id);
-        const messages = rows.map(r => ({
-            id:          r.message_id,
-            authorId:    r.author_id,
-            authorTag:   r.author_tag,
-            authorAvatar: null,
-            isBot:       r.author_bot === 1,
-            content:     r.content,
-            attachments: JSON.parse(r.attachments || '[]'),
-            embedCount:  r.embeds,
-            timestamp:   new Date(r.created_at * 1000),
-        }));
-        return this._buildHTML(messages, ticket, guild);
-    }
+    return all.reverse().map((m) => ({
+      id: m.id,
+      authorId: m.author.id,
+      authorTag: m.author.tag,
+      authorAvatar: m.author.displayAvatarURL({ size: 32, extension: "png" }),
+      isBot: m.author.bot,
+      content: m.content,
+      attachments: m.attachments.map((a) => ({
+        url: a.url,
+        name: a.name,
+        contentType: a.contentType,
+      })),
+      embedCount: m.embeds.length,
+      timestamp: m.createdAt,
+    }));
+  }
 
-    // -------------------------------------------------------------------------
+  _buildHTML(messages, ticket, guild) {
+    const openedAt = new Date(ticket.opened_at * 1000).toUTCString();
+    const closedAt = ticket.closed_at
+      ? new Date(ticket.closed_at * 1000).toUTCString()
+      : "N/A";
+    const answers = ticket.answers ?? {};
 
-    async _fetchAllMessages(channel) {
-        const all    = [];
-        let   lastId = null;
+    const messageRows = messages.map((m) => this._renderMessage(m)).join("\n");
+    const answersHtml = Object.keys(answers).length
+      ? this._renderAnswers(answers)
+      : "";
 
-        // Discord returns up to 100 messages per request; paginate until exhausted.
-        while (true) {
-            const batch = await channel.messages.fetch({ limit: 100, ...(lastId && { before: lastId }) });
-            if (batch.size === 0) break;
-            all.push(...batch.values());
-            lastId = batch.last().id;
-            if (batch.size < 100) break;
-        }
-
-        return all.reverse().map(m => ({
-            id:          m.id,
-            authorId:    m.author.id,
-            authorTag:   m.author.tag,
-            authorAvatar: m.author.displayAvatarURL({ size: 32, extension: 'png' }),
-            isBot:       m.author.bot,
-            content:     m.content,
-            attachments: m.attachments.map(a => ({ url: a.url, name: a.name, contentType: a.contentType })),
-            embedCount:  m.embeds.length,
-            timestamp:   m.createdAt,
-        }));
-    }
-
-    _buildHTML(messages, ticket, guild) {
-        const openedAt = new Date(ticket.opened_at * 1000).toUTCString();
-        const closedAt = ticket.closed_at ? new Date(ticket.closed_at * 1000).toUTCString() : 'N/A';
-        const answers  = ticket.answers ?? {};
-
-        const messageRows = messages.map(m => this._renderMessage(m)).join('\n');
-        const answersHtml = Object.keys(answers).length
-            ? this._renderAnswers(answers)
-            : '';
-
-        return Buffer.from(`<!DOCTYPE html>
+    return Buffer.from(
+      `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -94,13 +103,13 @@ class TranscriptGenerator {
   <div class="header">
     <h1>Ticket #${ticket.ticket_number} — ${this._esc(ticket.ticket_name)}</h1>
     <div class="meta-grid">
-      <div class="meta-item"><label>Server</label>   <span>${this._esc(guild?.name ?? 'Unknown')}</span></div>
+      <div class="meta-item"><label>Server</label>   <span>${this._esc(guild?.name ?? "Unknown")}</span></div>
       <div class="meta-item"><label>Opened By</label><span>${ticket.user_id}</span></div>
       <div class="meta-item"><label>Opened At</label><span>${openedAt}</span></div>
       <div class="meta-item"><label>Closed At</label><span>${closedAt}</span></div>
       <div class="meta-item"><label>Messages</label> <span>${messages.length}</span></div>
       <div class="meta-item"><label>Status</label>   <span class="status-${ticket.status}">${ticket.status.toUpperCase()}</span></div>
-      ${ticket.closed_by ? `<div class="meta-item"><label>Closed By</label><span>${ticket.closed_by}</span></div>` : ''}
+      ${ticket.closed_by ? `<div class="meta-item"><label>Closed By</label><span>${ticket.closed_by}</span></div>` : ""}
     </div>
   </div>
 
@@ -119,104 +128,117 @@ class TranscriptGenerator {
   });
 </script>
 </body>
-</html>`, 'utf8');
-    }
+</html>`,
+      "utf8",
+    );
+  }
 
-    _renderMessage(m) {
-        const time   = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp);
-        const ts     = time.toLocaleString('en-US', { hour12: false, timeZone: 'UTC' }) + ' UTC';
-        const avatar = m.authorAvatar ?? this._defaultAvatar(m.authorId);
+  _renderMessage(m) {
+    const time =
+      m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp);
+    const ts =
+      time.toLocaleString("en-US", { hour12: false, timeZone: "UTC" }) + " UTC";
+    const avatar = m.authorAvatar ?? this._defaultAvatar(m.authorId);
 
-        // Build content: escape HTML first, then linkify, then apply markdown.
-        // Order matters: escape must come first so user content can't inject HTML.
-        // Linkify must come BEFORE markdown so URLs inside bold/italic still render.
-        // However the markdown regexes operate on escaped text and produce HTML,
-        // so linkify can safely run after escaping and before markdown tags are inserted.
-        const content = m.content
-            ? this._applyMarkdown(this._linkify(this._esc(m.content)))
-            : '';
+    // Build content: escape HTML first, then linkify, then apply markdown.
+    // Order matters: escape must come first so user content can't inject HTML.
+    // Linkify must come BEFORE markdown so URLs inside bold/italic still render.
+    // However the markdown regexes operate on escaped text and produce HTML,
+    // so linkify can safely run after escaping and before markdown tags are inserted.
+    const content = m.content
+      ? this._applyMarkdown(this._linkify(this._esc(m.content)))
+      : "";
 
-        const attachmentsHtml = (m.attachments ?? []).map(a => {
-            if (a.contentType?.startsWith('image/')) {
-                return `<a href="${a.url}" target="_blank" rel="noopener"><img class="attach-img" src="${a.url}" alt="${this._esc(a.name)}"/></a>`;
-            }
-            return `<a class="attach-file" href="${a.url}" target="_blank" rel="noopener">[attachment] ${this._esc(a.name)}</a>`;
-        }).join('');
+    const attachmentsHtml = (m.attachments ?? [])
+      .map((a) => {
+        if (a.contentType?.startsWith("image/")) {
+          return `<a href="${a.url}" target="_blank" rel="noopener"><img class="attach-img" src="${a.url}" alt="${this._esc(a.name)}"/></a>`;
+        }
+        return `<a class="attach-file" href="${a.url}" target="_blank" rel="noopener">[attachment] ${this._esc(a.name)}</a>`;
+      })
+      .join("");
 
-        const embedNote = m.embedCount > 0
-            ? `<span class="embed-note">[${m.embedCount} embed${m.embedCount !== 1 ? 's' : ''}]</span>`
-            : '';
+    const embedNote =
+      m.embedCount > 0
+        ? `<span class="embed-note">[${m.embedCount} embed${m.embedCount !== 1 ? "s" : ""}]</span>`
+        : "";
 
-        return `
+    return `
 <div class="msg">
   <img class="avatar" src="${avatar}" alt=""/>
   <div class="msg-body">
     <div class="msg-header">
       <span class="author">${this._esc(m.authorTag)}</span>
-      ${m.isBot ? '<span class="bot-tag">BOT</span>' : ''}
+      ${m.isBot ? '<span class="bot-tag">BOT</span>' : ""}
       <span class="time">${ts}</span>
     </div>
-    ${content   ? `<div class="msg-content">${content}</div>` : ''}
+    ${content ? `<div class="msg-content">${content}</div>` : ""}
     ${embedNote}
-    ${attachmentsHtml ? `<div class="attachments">${attachmentsHtml}</div>` : ''}
+    ${attachmentsHtml ? `<div class="attachments">${attachmentsHtml}</div>` : ""}
   </div>
 </div>`;
-    }
+  }
 
-    _renderAnswers(answers) {
-        const items = Object.entries(answers)
-            .map(([q, a]) => `<div class="answer"><strong>${this._esc(q)}</strong><p>${this._esc(a)}</p></div>`)
-            .join('');
-        return `<div class="answers"><h3>Ticket Answers</h3>${items}</div>`;
-    }
+  _renderAnswers(answers) {
+    const items = Object.entries(answers)
+      .map(
+        ([q, a]) =>
+          `<div class="answer"><strong>${this._esc(q)}</strong><p>${this._esc(a)}</p></div>`,
+      )
+      .join("");
+    return `<div class="answers"><h3>Ticket Answers</h3>${items}</div>`;
+  }
 
-    _defaultAvatar(userId) {
-        try {
-            return `https://cdn.discordapp.com/embed/avatars/${(BigInt(userId) >> 22n) % 6n}.png`;
-        } catch {
-            return 'https://cdn.discordapp.com/embed/avatars/0.png';
-        }
+  _defaultAvatar(userId) {
+    try {
+      return `https://cdn.discordapp.com/embed/avatars/${(BigInt(userId) >> 22n) % 6n}.png`;
+    } catch {
+      return "https://cdn.discordapp.com/embed/avatars/0.png";
     }
+  }
 
-    // -------------------------------------------------------------------------
-    // Text processing
-    // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Text processing
+  // -------------------------------------------------------------------------
 
-    /** HTML-escapes a string. Must be called before any other text transformation. */
-    _esc(str) {
-        if (!str) return '';
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
+  /** HTML-escapes a string. Must be called before any other text transformation. */
+  _esc(str) {
+    if (!str) return "";
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
 
-    /**
-     * Turns http(s) URLs in already-escaped text into anchor tags.
-     * Runs before _applyMarkdown so URLs inside bold/italic text still link correctly.
-     */
-    _linkify(str) {
-        // The URL in escaped text will use &amp; etc, so we match the raw URL characters.
-        return str.replace(/(https?:\/\/[^\s<>&"]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-    }
+  /**
+   * Turns http(s) URLs in already-escaped text into anchor tags.
+   * Runs before _applyMarkdown so URLs inside bold/italic text still link correctly.
+   */
+  _linkify(str) {
+    // The URL in escaped text will use &amp; etc, so we match the raw URL characters.
+    return str.replace(
+      /(https?:\/\/[^\s<>&"]+)/g,
+      '<a href="$1" target="_blank" rel="noopener">$1</a>',
+    );
+  }
 
-    /**
-     * Converts a subset of Discord markdown to HTML.
-     * Operates on already HTML-escaped + linkified text.
-     * Code blocks are handled first to prevent other rules matching inside them.
-     */
-    _applyMarkdown(str) {
-        return str
-            .replace(/```(?:\w+\n)?([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-            .replace(/`([^`]+)`/g,      '<code>$1</code>')
-            .replace(/\*\*(.+?)\*\*/g,  '<strong>$1</strong>')
-            .replace(/\*(.+?)\*/g,      '<em>$1</em>')
-            .replace(/_(.+?)_/g,        '<em>$1</em>')
-            .replace(/~~(.+?)~~/g,      '<del>$1</del>')
-            .replace(/\|\|(.+?)\|\|/g,  '<span class="spoiler">$1</span>')
-            .replace(/^&gt; (.+)$/gm,   '<blockquote>$1</blockquote>');
-    }
+  /**
+   * Converts a subset of Discord markdown to HTML.
+   * Operates on already HTML-escaped + linkified text.
+   * Code blocks are handled first to prevent other rules matching inside them.
+   */
+  _applyMarkdown(str) {
+    return str
+      .replace(/```(?:\w+\n)?([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/_(.+?)_/g, "<em>$1</em>")
+      .replace(/~~(.+?)~~/g, "<del>$1</del>")
+      .replace(/\|\|(.+?)\|\|/g, '<span class="spoiler">$1</span>')
+      .replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
+  }
 }
 
 // ---------------------------------------------------------------------------
