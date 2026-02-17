@@ -1,70 +1,54 @@
+'use strict';
+
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('automod-info')
-        .setDescription('Get information about the automod system'),
+        .setDescription('Show an overview of the automod system'),
 
     async execute(interaction) {
         const embed = new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle('🛡️ Automod System Information')
-            .setDescription('Comprehensive Discord automoderation with 19 rule types')
+            .setColor(0x5865F2)
+            .setTitle('Automod System')
             .addFields(
                 {
-                    name: '📋 Available Rule Types',
-                    value: 
-                        '**Content Rules:**\n' +
-                        '• All Caps, Bad Words, Duplicate Text, Character Count\n' +
-                        '• Newlines, Emoji Spam, Zalgo Text, Spoilers\n\n' +
-                        '**Link Rules:**\n' +
-                        '• Invite Links, Phishing Links, Links, Masked Links\n' +
-                        '• Links Cooldown\n\n' +
-                        '**Spam Rules:**\n' +
-                        '• Fast Message Spam, Image Spam, Mass Mentions\n' +
-                        '• Mentions Cooldown, Stickers, Sticker Cooldown'
-                },
-                {
-                    name: '⚡ Available Actions',
-                    value: 
-                        '• **Warn** — Auto-deleting in-channel warning\n' +
-                        '• **Delete** — Remove the message\n' +
-                        '• **Warn + Delete** — Both at once\n' +
-                        '• **Auto Mute** — Mute after X violations\n' +
-                        '• **Auto Ban** — Ban after X violations\n' +
-                        '• **Instant Mute** — Immediate timeout\n' +
-                        '• **Instant Ban** — Immediate ban'
-                },
-                {
-                    name: '🎯 Key Features',
+                    name: 'Rule Types (19)',
                     value:
-                        '• Per-rule role/channel scoping\n' +
-                        '• Global ignored roles/channels\n' +
-                        '• Custom log channels per rule\n' +
-                        '• 5-minute violation windows\n' +
-                        '• Wildcard pattern matching\n' +
-                        '• Link allowlists/blocklists'
+                        '**Content:** All Caps, Bad Words, Duplicate Text, Character Count, ' +
+                        'Newlines, Emoji Spam, Zalgo Text, Spoilers\n' +
+                        '**Links:** Invite Links, Phishing Links, Links, Masked Links, Links Cooldown\n' +
+                        '**Spam:** Fast Message Spam, Image Spam, Mass Mentions, ' +
+                        'Mentions Cooldown, Stickers, Sticker Cooldown',
                 },
                 {
-                    name: '📚 Getting Started',
+                    name: 'Actions (7)',
                     value:
-                        '1. `/automod-settings log-channel` — Set log channel\n' +
-                        '2. `/automod-setup` — Create your first rule\n' +
-                        '3. `/automod-list` — View all rules\n' +
-                        '4. `/automod-badwords add` — Add filtered words\n' +
-                        '5. `/automod-filter add` — Configure rule filters'
+                        'Warn, Delete, Warn + Delete, ' +
+                        'Auto Mute (after X violations), Auto Ban (after X violations), ' +
+                        'Instant Mute, Instant Ban',
                 },
                 {
-                    name: '🔗 Quick Links',
+                    name: 'Key Features',
                     value:
-                        '[Setup Guide](https://github.com/repo/SETUP.md) • ' +
-                        '[Full Documentation](https://github.com/repo/README.md) • ' +
-                        '[Command Reference](https://github.com/repo#commands)'
+                        'Per-rule role and channel scoping\n' +
+                        'Global ignored roles and channels\n' +
+                        'Custom log channel per rule\n' +
+                        '5-minute violation windows\n' +
+                        'Wildcard pattern matching for bad words\n' +
+                        'Link allowlists and blocklists',
+                },
+                {
+                    name: 'Quick Start',
+                    value:
+                        '1. `/automod-settings log-channel` — set a log channel\n' +
+                        '2. `/automod-setup` — create your first rule\n' +
+                        '3. `/automod-list` — view all rules\n' +
+                        '4. `/automod-badwords add` — add filtered words\n' +
+                        '5. `/automod-filter add` — configure rule scoping',
                 }
-            )
-            .setFooter({ text: 'Use /help <command> for detailed command help' })
-            .setTimestamp();
+            );
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    }
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+    },
 };

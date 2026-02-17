@@ -3,6 +3,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 require('dotenv').config();
 
+// Stub out runtime-only modules so commands can be loaded just for their
+// slash-command schema without needing the database or Discord client.
+const Module = require('module');
+const _originalLoad = Module._load;
+const STUBS = [
+    'utils/ticketDatabase',
+    'utils/ticketManager',
+    'utils/transcriptGenerator',
+    'utils/database',
+    'utils/automodChecker',
+    'utils/automodActions',
+    'utils/scheduledTasks',
+    'better-sqlite3',
+];
+Module._load = function (request, parent, isMain) {
+    if (STUBS.some(s => request.includes(s))) return {};
+    return _originalLoad.apply(this, arguments);
+};
+
 // Validate required environment variables
 if (!process.env.DISCORD_CLIENT_ID) {
     console.error('[ERROR] DISCORD_CLIENT_ID is not set in .env file');
@@ -15,65 +34,58 @@ if (!process.env.DISCORD_TOKEN) {
 }
 
 const clientId = process.env.DISCORD_CLIENT_ID;
-const guildId = process.env.GUILD_ID; // Optional - for testing only
-const token = process.env.DISCORD_TOKEN;
+const guildId  = process.env.GUILD_ID; // Optional — instant deploy for testing
+const token    = process.env.DISCORD_TOKEN;
 
 const commands = [];
 
-// Grab all the command folders from the commands directory
-const foldersPath = path.join(__dirname, 'commands');
+const foldersPath   = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
 
 for (const folder of commandFolders) {
     const commandsPath = path.join(foldersPath, folder);
-    const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
-    
+    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
+
     for (const file of commandFiles) {
         const filePath = path.join(commandsPath, file);
         try {
             const command = require(filePath);
             if ('data' in command && 'execute' in command) {
                 commands.push(command.data.toJSON());
-                console.log(`[LOAD] Loaded command: ${command.data.name}`);
+                console.log(`[LOAD] ${command.data.name}`);
             } else {
-                console.warn(`[WARN] Command at ${filePath} is missing "data" or "execute" property`);
+                console.warn(`[WARN] Skipping ${filePath} — missing "data" or "execute"`);
             }
         } catch (error) {
-            console.error(`[ERROR] Failed to load command at ${filePath}:`, error);
+            console.error(`[ERROR] Failed to load ${filePath}:`, error.message);
         }
     }
 }
 
-// Construct and prepare an instance of the REST module
 const rest = new REST().setToken(token);
 
-// Deploy commands
 (async () => {
     try {
-        console.log(`[DEPLOY] Started refreshing ${commands.length} application (/) commands`);
-        
+        console.log(`\n[DEPLOY] Registering ${commands.length} command(s)...`);
+
         let data;
-        
         if (guildId) {
-            // Deploy to specific guild (instant, good for testing)
-            console.log(`[DEPLOY] Deploying to guild: ${guildId}`);
+            console.log(`[DEPLOY] Guild deploy → ${guildId} (instant)`);
             data = await rest.put(
                 Routes.applicationGuildCommands(clientId, guildId),
                 { body: commands }
             );
         } else {
-            // Deploy globally (takes up to 1 hour to propagate)
-            console.log('[DEPLOY] Deploying globally (may take up to 1 hour)');
+            console.log('[DEPLOY] Global deploy (up to 1 hour to propagate)');
             data = await rest.put(
                 Routes.applicationCommands(clientId),
                 { body: commands }
             );
         }
-        
-        console.log(`[SUCCESS] Successfully reloaded ${data.length} application (/) commands`);
-        
+
+        console.log(`[SUCCESS] Registered ${data.length} command(s).`);
     } catch (error) {
-        console.error('[ERROR] Failed to deploy commands:', error);
+        console.error('[ERROR] Deploy failed:', error);
         process.exit(1);
     }
 })();

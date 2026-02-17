@@ -1,24 +1,27 @@
 const { Events, ActivityType } = require('discord.js');
-const db = require('../utils/database');
+const automodDb = require('../utils/database');
+const ScheduledTasks = require('../utils/scheduledTasks');
 
 module.exports = {
     name: Events.ClientReady,
     once: true,
     execute(client) {
-        console.log(`[READY] ${client.user.tag} is online!`);
-        
-        // Set bot status
+        console.log(`[READY] Logged in as ${client.user.tag}`);
+        console.log(`[READY] Serving ${client.guilds.cache.size} guild(s)`);
+
         client.user.setActivity('for rule violations', { type: ActivityType.Watching });
 
-        // Clean up expired data every 5 minutes
+        // Start scheduled tasks (automod cleanup, etc.)
+        new ScheduledTasks(client, automodDb);
+
+        // Clean expired automod data every 5 minutes
         setInterval(() => {
             try {
-                db.cleanExpiredViolations();
-                db.cleanOldTracking();
-                console.log('[CLEANUP] Expired data cleaned');
-            } catch (error) {
-                console.error('[CLEANUP] Error cleaning data:', error);
+                automodDb.cleanExpiredViolations();
+                automodDb.cleanOldTracking();
+            } catch (err) {
+                console.error('[CLEANUP] Failed to clean expired data:', err);
             }
-        }, 5 * 60 * 1000); // 5 minutes
-    }
+        }, 5 * 60 * 1000);
+    },
 };

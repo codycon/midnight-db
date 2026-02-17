@@ -8,17 +8,17 @@
 const fs = require('fs');
 const path = require('path');
 
-console.log('🔍 Testing Automod Bot Installation...\n');
+console.log('Testing Automod Bot Installation...\n');
 
 let passed = 0;
 let failed = 0;
 
 function test(name, condition, fix = '') {
     if (condition) {
-        console.log(`✅ ${name}`);
+        console.log(`${name}`);
         passed++;
     } else {
-        console.log(`❌ ${name}`);
+        console.log(`${name}`);
         if (fix) console.log(`   Fix: ${fix}`);
         failed++;
     }
@@ -98,24 +98,23 @@ if (fs.existsSync('.env')) {
 try {
     const adminCommands = fs.readdirSync('commands/admin').filter(f => f.endsWith('.js'));
     const utilityCommands = fs.readdirSync('commands/utility').filter(f => f.endsWith('.js'));
-    console.log(`\n📊 Found ${adminCommands.length} admin commands and ${utilityCommands.length} utility commands`);
+    console.log(`\nFound ${adminCommands.length} admin commands and ${utilityCommands.length} utility commands`);
 } catch (e) {
-    console.log('⚠️  Could not count commands');
+    console.log('Could not count commands');
 }
 
 // Summary
 console.log('\n' + '='.repeat(50));
-console.log(`✅ Passed: ${passed}`);
-console.log(`❌ Failed: ${failed}`);
+console.log(`Passed: ${passed}`);
+console.log(`Failed: ${failed}`);
 
 if (failed === 0) {
-    console.log('\n🎉 All tests passed! Your bot is ready to run.');
+    console.log('\nAll tests passed! Your bot is ready to run.');
     console.log('\nNext steps:');
     console.log('1. npm run deploy-commands');
     console.log('2. npm start');
 } else {
-    console.log('\n⚠️  Please fix the issues above before running the bot.');
-    console.log('\nFor help, see SETUP.md');
+    console.log('\nPlease fix the issues above before running the bot.');
 }
 
 process.exit(failed > 0 ? 1 : 0);

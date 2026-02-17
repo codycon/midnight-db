@@ -1,404 +1,284 @@
+'use strict';
+
+const { PermissionFlagsBits } = require('discord.js');
 const db = require('./database');
-const { PermissionsBitField } = require('discord.js');
+
+// Known phishing domains. Extend this list as new domains are identified.
+const PHISHING_DOMAINS = [
+    'discord-nitro.com',
+    'discord-gift.com',
+    'discordgift.site',
+    'steamcommunity.ru',
+    'steamcommunlty.com',
+    'discordapp.ru',
+];
+
+// Default thresholds used when a rule has no threshold stored.
+const DEFAULTS = {
+    all_caps:           70,   // % of uppercase letters
+    newlines:           10,   // number of newlines
+    character_count:  2000,   // total character count
+    emoji_spam:         10,   // emoji count
+    fast_message_spam:   5,   // messages per 5 seconds
+    image_spam:          3,   // images per 10 seconds
+    mass_mentions:       5,   // mentions in a single message
+    mentions_cooldown:   5,   // total mentions within 30 seconds
+    links_cooldown:      3,   // links within 30 seconds
+    sticker_cooldown:    3,   // stickers within 60 seconds
+};
 
 class AutomodChecker {
-    constructor() {
-        // Known phishing domains (expand as needed)
-        this.phishingDomains = [
-            'discord-nitro.com',
-            'discord-gift.com',
-            'discordgift.site',
-            'steamcommunity.ru',
-            'steamcommunlty.com',
-            'discordapp.ru'
-        ];
+
+    /**
+     * Checks a message against all enabled guild automod rules.
+     * Returns the first violation found, or null if the message is clean.
+     *
+     * @param {import('discord.js').Message} message
+     * @returns {Promise<{ rule: object } | null>}
+     */
+    async checkMessage(message) {
+        const settings = db.getSettings(message.guild.id);
+
+        if (await this._shouldIgnore(message, settings)) return null;
+
+        const rules = db.getRules(message.guild.id);
+
+        for (const rule of rules) {
+            if (!rule.enabled) continue;
+            if (!this._passesRuleFilters(rule, message)) continue;
+
+            const triggered = await this._evaluateRule(rule, message);
+            if (triggered) return { rule };
+        }
+
+        return null;
     }
 
-    // Check if message should be ignored based on permissions and settings
-    async shouldIgnore(message, settings) {
-        // Ignore bots
+    // -------------------------------------------------------------------------
+    // Permission / filter checks
+    // -------------------------------------------------------------------------
+
+    async _shouldIgnore(message, settings) {
         if (message.author.bot) return true;
-
-        // Ignore server owner
         if (message.guild.ownerId === message.author.id) return true;
+        if (message.member.permissions.has(PermissionFlagsBits.Administrator)) return true;
 
-        // Ignore admins
-        if (message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
-
-        // Check ignored roles
-        if (settings && settings.ignored_roles) {
-            const hasIgnoredRole = message.member.roles.cache.some(role => 
-                settings.ignored_roles.includes(role.id)
-            );
-            if (hasIgnoredRole) return true;
+        if (settings?.ignored_roles?.length) {
+            const ignored = message.member.roles.cache.some(r => settings.ignored_roles.includes(r.id));
+            if (ignored) return true;
         }
-
-        // Check ignored channels
-        if (settings && settings.ignored_channels) {
-            if (settings.ignored_channels.includes(message.channel.id)) return true;
-        }
+        if (settings?.ignored_channels?.includes(message.channel.id)) return true;
 
         return false;
     }
 
-    // Check if target passes rule-specific filters
-    checkRuleFilters(rule, message) {
+    _passesRuleFilters(rule, message) {
         const filters = db.getFilters(rule.id);
-        
-        let affectedRoles = filters.filter(f => f.filter_type === 'affected' && f.target_type === 'role');
-        let affectedChannels = filters.filter(f => f.filter_type === 'affected' && f.target_type === 'channel');
-        let ignoredRoles = filters.filter(f => f.filter_type === 'ignored' && f.target_type === 'role');
-        let ignoredChannels = filters.filter(f => f.filter_type === 'ignored' && f.target_type === 'channel');
 
-        // If affected roles are specified, user must have one
-        if (affectedRoles.length > 0) {
-            const hasAffectedRole = message.member.roles.cache.some(role =>
-                affectedRoles.some(f => f.target_id === role.id)
-            );
-            if (!hasAffectedRole) return false;
+        const affectedRoles    = filters.filter(f => f.filter_type === 'affected' && f.target_type === 'role');
+        const affectedChannels = filters.filter(f => f.filter_type === 'affected' && f.target_type === 'channel');
+        const ignoredRoles     = filters.filter(f => f.filter_type === 'ignored'  && f.target_type === 'role');
+        const ignoredChannels  = filters.filter(f => f.filter_type === 'ignored'  && f.target_type === 'channel');
+
+        if (affectedRoles.length) {
+            const hasRole = message.member.roles.cache.some(r => affectedRoles.some(f => f.target_id === r.id));
+            if (!hasRole) return false;
         }
-
-        // If affected channels are specified, must be in one
-        if (affectedChannels.length > 0) {
-            const inAffectedChannel = affectedChannels.some(f => f.target_id === message.channel.id);
-            if (!inAffectedChannel) return false;
+        if (affectedChannels.length) {
+            if (!affectedChannels.some(f => f.target_id === message.channel.id)) return false;
         }
-
-        // Check ignored roles
-        if (ignoredRoles.length > 0) {
-            const hasIgnoredRole = message.member.roles.cache.some(role =>
-                ignoredRoles.some(f => f.target_id === role.id)
-            );
-            if (hasIgnoredRole) return false;
+        if (ignoredRoles.length) {
+            const hasIgnored = message.member.roles.cache.some(r => ignoredRoles.some(f => f.target_id === r.id));
+            if (hasIgnored) return false;
         }
-
-        // Check ignored channels
-        if (ignoredChannels.length > 0) {
-            const inIgnoredChannel = ignoredChannels.some(f => f.target_id === message.channel.id);
-            if (inIgnoredChannel) return false;
+        if (ignoredChannels.length) {
+            if (ignoredChannels.some(f => f.target_id === message.channel.id)) return false;
         }
 
         return true;
     }
 
-    // Rule: All Caps
-    checkAllCaps(content, threshold = 70) {
+    // -------------------------------------------------------------------------
+    // Rule evaluation dispatcher
+    // -------------------------------------------------------------------------
+
+    async _evaluateRule(rule, message) {
+        const t = rule.threshold;
+
+        switch (rule.rule_type) {
+            case 'all_caps':          return this._checkAllCaps(message.content, t ?? DEFAULTS.all_caps);
+            case 'bad_words':         return this._checkBadWords(message.content, message.guild.id);
+            case 'newlines':          return this._checkNewlines(message.content, t ?? DEFAULTS.newlines);
+            case 'duplicate_text':    return this._checkDuplicateText(message.content);
+            case 'character_count':   return this._checkCharacterCount(message.content, t ?? DEFAULTS.character_count);
+            case 'emoji_spam':        return this._checkEmojiSpam(message.content, t ?? DEFAULTS.emoji_spam);
+            case 'fast_message_spam': return this._checkFastMessageSpam(message, t ?? DEFAULTS.fast_message_spam);
+            case 'image_spam':        return this._checkImageSpam(message, t ?? DEFAULTS.image_spam);
+            case 'invite_links':      return this._checkInviteLinks(message.content);
+            case 'phishing_links':    return this._checkPhishingLinks(message.content);
+            case 'links':             return this._checkLinks(message.content, message.guild.id, t === 1);
+            case 'links_cooldown':    return this._checkLinksCooldown(message, t ?? DEFAULTS.links_cooldown, rule.threshold_seconds ?? 30);
+            case 'mass_mentions':     return this._checkMassMentions(message, t ?? DEFAULTS.mass_mentions);
+            case 'mentions_cooldown': return this._checkMentionsCooldown(message, t ?? DEFAULTS.mentions_cooldown);
+            case 'spoilers':          return this._checkSpoilers(message);
+            case 'masked_links':      return this._checkMaskedLinks(message.content);
+            case 'stickers':          return this._checkStickers(message);
+            case 'sticker_cooldown':  return this._checkStickerCooldown(message, t ?? DEFAULTS.sticker_cooldown);
+            case 'zalgo':             return this._checkZalgo(message.content);
+            default:
+                console.warn(`[AUTOMOD] Unknown rule type: ${rule.rule_type}`);
+                return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Rule implementations
+    // -------------------------------------------------------------------------
+
+    _checkAllCaps(content, threshold) {
         if (content.length < 5) return false;
         const letters = content.replace(/[^a-zA-Z]/g, '');
-        if (letters.length === 0) return false;
-        const upperCount = content.replace(/[^A-Z]/g, '').length;
-        const percentage = (upperCount / letters.length) * 100;
-        return percentage >= threshold;
+        if (!letters.length) return false;
+        const upperRatio = (content.replace(/[^A-Z]/g, '').length / letters.length) * 100;
+        return upperRatio >= threshold;
     }
 
-    // Rule: Bad Words
-    checkBadWords(content, guildId) {
-        const badWords = db.getBadWords(guildId);
-        const lowerContent = content.toLowerCase();
-        
-        for (const entry of badWords) {
+    _checkBadWords(content, guildId) {
+        const words      = db.getBadWords(guildId);
+        const lower      = content.toLowerCase();
+
+        for (const entry of words) {
             if (entry.match_type === 'exact') {
-                const words = lowerContent.split(/\s+/);
-                if (words.includes(entry.word)) return true;
+                if (lower.split(/\s+/).includes(entry.word)) return true;
             } else if (entry.match_type === 'wildcard') {
                 const pattern = entry.word.replace(/\*/g, '.*');
-                const regex = new RegExp(pattern, 'i');
-                if (regex.test(content)) return true;
-            } else { // contains
-                if (lowerContent.includes(entry.word)) return true;
+                if (new RegExp(pattern, 'i').test(content)) return true;
+            } else {
+                if (lower.includes(entry.word)) return true;
             }
         }
         return false;
     }
 
-    // Rule: Chat Clearing Newlines
-    checkNewlines(content, threshold = 10) {
-        const newlineCount = (content.match(/\n/g) || []).length;
-        return newlineCount >= threshold;
+    _checkNewlines(content, threshold) {
+        return (content.match(/\n/g) ?? []).length >= threshold;
     }
 
-    // Rule: Duplicate Text
-    checkDuplicateText(content) {
-        // Check for repeated characters (aaaaaaa)
-        const charRepeat = /(.)\1{7,}/i;
-        if (charRepeat.test(content)) return true;
-
-        // Check for repeated words (word word word)
+    _checkDuplicateText(content) {
+        // Repeated character runs (e.g. "aaaaaaaaa")
+        if (/(.)\1{7,}/i.test(content)) return true;
+        // Repeated words (e.g. "word word word word word")
         const words = content.split(/\s+/);
-        if (words.length >= 5) {
-            for (let i = 0; i < words.length - 4; i++) {
-                if (words[i] === words[i+1] && words[i] === words[i+2] && 
-                    words[i] === words[i+3] && words[i] === words[i+4]) {
-                    return true;
-                }
-            }
+        for (let i = 0; i <= words.length - 5; i++) {
+            if (words.slice(i, i + 5).every(w => w === words[i])) return true;
         }
-
         return false;
     }
 
-    // Rule: Character Count
-    checkCharacterCount(content, maxLength = 2000) {
-        return content.length > maxLength;
+    _checkCharacterCount(content, max) {
+        return content.length > max;
     }
 
-    // Rule: Emoji Spam
-    checkEmojiSpam(content, threshold = 10) {
-        // Unicode emoji
-        const emojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/gu;
-        const unicodeEmojis = (content.match(emojiRegex) || []).length;
-        
-        // Custom Discord emojis
-        const customEmojis = (content.match(/<a?:\w+:\d+>/g) || []).length;
-        
-        return (unicodeEmojis + customEmojis) >= threshold;
+    _checkEmojiSpam(content, threshold) {
+        const unicode = (content.match(/(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/gu) ?? []).length;
+        const custom  = (content.match(/<a?:\w+:\d+>/g) ?? []).length;
+        return (unicode + custom) >= threshold;
     }
 
-    // Rule: Fast Message Spam
-    async checkFastMessageSpam(message, threshold = 5) {
+    async _checkFastMessageSpam(message, threshold) {
         db.trackMessage(message.guild.id, message.author.id, message.channel.id, 'message');
-        const recentMessages = db.getRecentMessages(message.guild.id, message.author.id, 'message', 5);
-        
-        // Count messages in this specific channel
-        const channelMessages = recentMessages.filter(m => m.channel_id === message.channel.id);
-        return channelMessages.length >= threshold;
+        const recent = db.getRecentMessages(message.guild.id, message.author.id, 'message', 5);
+        return recent.filter(m => m.channel_id === message.channel.id).length >= threshold;
     }
 
-    // Rule: Image Spam
-    async checkImageSpam(message, threshold = 3) {
-        if (message.attachments.size === 0) return false;
-        
-        const hasImage = message.attachments.some(att => 
-            att.contentType && att.contentType.startsWith('image/')
-        );
-        
-        if (!hasImage) return false;
+    async _checkImageSpam(message, threshold) {
+        const images = [...message.attachments.values()].filter(a => a.contentType?.startsWith('image/'));
+        if (!images.length) return false;
+        if (images.length >= threshold) return true;
 
-        // Check multiple images at once
-        const imageCount = Array.from(message.attachments.values()).filter(att =>
-            att.contentType && att.contentType.startsWith('image/')
-        ).length;
-        
-        if (imageCount >= threshold) return true;
-
-        // Check images within 10 seconds
         db.trackMessage(message.guild.id, message.author.id, message.channel.id, 'image');
-        const recentImages = db.getRecentMessages(message.guild.id, message.author.id, 'image', 10);
-        return recentImages.length >= threshold;
+        const recent = db.getRecentMessages(message.guild.id, message.author.id, 'image', 10);
+        return recent.length >= threshold;
     }
 
-    // Rule: Invite Links
-    checkInviteLinks(content) {
-        const inviteRegex = /(discord\.gg|discord\.com\/invite|discordapp\.com\/invite)\/[a-zA-Z0-9]+/gi;
-        return inviteRegex.test(content);
+    _checkInviteLinks(content) {
+        return /(discord\.gg|discord\.com\/invite|discordapp\.com\/invite)\/[a-zA-Z0-9]+/i.test(content);
     }
 
-    // Rule: Known Phishing Links
-    checkPhishingLinks(content) {
-        const urlRegex = /(https?:\/\/[^\s]+)/gi;
-        const urls = content.match(urlRegex) || [];
-        
+    _checkPhishingLinks(content) {
+        const urls = content.match(/(https?:\/\/[^\s]+)/gi) ?? [];
+        return urls.some(url => {
+            try {
+                const host = new URL(url).hostname.toLowerCase();
+                return PHISHING_DOMAINS.some(domain => host.includes(domain));
+            } catch {
+                return false;
+            }
+        });
+    }
+
+    _checkLinks(content, guildId, allowlistMode) {
+        const urls = content.match(/(https?:\/\/[^\s]+)/gi) ?? [];
+        if (!urls.length) return false;
+
+        const blocked = db.getBlockedLinks(guildId);
+        const allowed = allowlistMode ? db.getAllowedLinks(guildId) : [];
+
         for (const url of urls) {
             try {
-                const urlObj = new URL(url);
-                const domain = urlObj.hostname.toLowerCase();
-                
-                if (this.phishingDomains.some(phish => domain.includes(phish))) {
-                    return true;
-                }
-            } catch (e) {
-                // Invalid URL, skip
+                const host = new URL(url).hostname.toLowerCase();
+                if (blocked.some(d => host.includes(d))) return true;
+                if (allowlistMode && allowed.length && !allowed.some(d => host.includes(d))) return true;
+            } catch {
+                // Skip malformed URLs
             }
         }
         return false;
     }
 
-    // Rule: Links
-    checkLinks(content, guildId, checkAllowlist = false) {
-        const urlRegex = /(https?:\/\/[^\s]+)/gi;
-        const urls = content.match(urlRegex) || [];
-        
-        if (urls.length === 0) return false;
-
-        const blockedLinks = db.getBlockedLinks(guildId);
-        const allowedLinks = db.getAllowedLinks(guildId);
-
-        for (const url of urls) {
-            try {
-                const urlObj = new URL(url);
-                const domain = urlObj.hostname.toLowerCase();
-
-                // Check blocked list
-                if (blockedLinks.some(blocked => domain.includes(blocked))) {
-                    return true;
-                }
-
-                // Check allowlist if enabled
-                if (checkAllowlist && allowedLinks.length > 0) {
-                    const isAllowed = allowedLinks.some(allowed => domain.includes(allowed));
-                    if (!isAllowed) return true;
-                }
-            } catch (e) {
-                // Invalid URL
-            }
-        }
-
-        return false;
-    }
-
-    // Rule: Links Cooldown
-    async checkLinksCooldown(message, threshold = 3, seconds = 30) {
-        const urlRegex = /(https?:\/\/[^\s]+)/gi;
-        const hasLink = urlRegex.test(message.content);
-        
-        if (!hasLink) return false;
-
+    async _checkLinksCooldown(message, threshold, seconds) {
+        if (!(/(https?:\/\/[^\s]+)/i.test(message.content))) return false;
         db.trackMessage(message.guild.id, message.author.id, message.channel.id, 'link');
-        const recentLinks = db.getRecentMessages(message.guild.id, message.author.id, 'link', seconds);
-        return recentLinks.length >= threshold;
+        const recent = db.getRecentMessages(message.guild.id, message.author.id, 'link', seconds);
+        return recent.length >= threshold;
     }
 
-    // Rule: Mass Mentions
-    checkMassMentions(message, threshold = 5) {
-        const mentionCount = message.mentions.users.size + message.mentions.roles.size;
-        return mentionCount >= threshold;
+    _checkMassMentions(message, threshold) {
+        return (message.mentions.users.size + message.mentions.roles.size) >= threshold;
     }
 
-    // Rule: Mentions Cooldown
-    async checkMentionsCooldown(message, threshold = 5) {
-        if (message.mentions.users.size === 0 && message.mentions.roles.size === 0) return false;
-
+    async _checkMentionsCooldown(message, threshold) {
+        if (!message.mentions.users.size && !message.mentions.roles.size) return false;
         db.trackMessage(message.guild.id, message.author.id, message.channel.id, 'mention');
-        const recentMentions = db.getRecentMessages(message.guild.id, message.author.id, 'mention', 30);
-        return recentMentions.length >= threshold;
+        const recent = db.getRecentMessages(message.guild.id, message.author.id, 'mention', 30);
+        return recent.length >= threshold;
     }
 
-    // Rule: Spoilers
-    checkSpoilers(message) {
-        // Text spoilers ||text||
+    _checkSpoilers(message) {
         if (message.content.includes('||')) return true;
-        
-        // Image spoilers
-        if (message.attachments.some(att => att.spoiler)) return true;
-        
+        if (message.attachments.some(a => a.spoiler)) return true;
         return false;
     }
 
-    // Rule: Masked Links
-    checkMaskedLinks(content) {
-        const maskedLinkRegex = /\[.+?\]\(https?:\/\/.+?\)/gi;
-        return maskedLinkRegex.test(content);
+    _checkMaskedLinks(content) {
+        return /\[.+?\]\(https?:\/\/.+?\)/i.test(content);
     }
 
-    // Rule: Stickers
-    checkStickers(message) {
+    _checkStickers(message) {
         return message.stickers.size > 0;
     }
 
-    // Rule: Sticker Cooldown
-    async checkStickerCooldown(message, threshold = 3) {
-        if (message.stickers.size === 0) return false;
-
+    async _checkStickerCooldown(message, threshold) {
+        if (!message.stickers.size) return false;
         db.trackMessage(message.guild.id, message.author.id, message.channel.id, 'sticker');
-        const recentStickers = db.getRecentMessages(message.guild.id, message.author.id, 'sticker', 60);
-        return recentStickers.length >= threshold;
+        const recent = db.getRecentMessages(message.guild.id, message.author.id, 'sticker', 60);
+        return recent.length >= threshold;
     }
 
-    // Rule: Zalgo Text
-    checkZalgo(content) {
-        // Count combining characters
-        const combiningChars = content.match(/[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g);
-        if (!combiningChars) return false;
-        
-        // If more than 20% of characters are combining marks, it's likely zalgo
-        const ratio = combiningChars.length / content.length;
-        return ratio > 0.2 || combiningChars.length > 15;
-    }
-
-    // Main check function
-    async checkMessage(message) {
-        const settings = db.getSettings(message.guild.id);
-        
-        // Check if message should be ignored
-        if (await this.shouldIgnore(message, settings)) return null;
-
-        const rules = db.getRules(message.guild.id);
-        
-        for (const rule of rules) {
-            if (!rule.enabled) continue;
-            
-            // Check rule-specific filters
-            if (!this.checkRuleFilters(rule, message)) continue;
-
-            let violated = false;
-            let violationData = {};
-
-            switch (rule.rule_type) {
-                case 'all_caps':
-                    violated = this.checkAllCaps(message.content, rule.threshold || 70);
-                    break;
-                case 'bad_words':
-                    violated = this.checkBadWords(message.content, message.guild.id);
-                    break;
-                case 'newlines':
-                    violated = this.checkNewlines(message.content, rule.threshold || 10);
-                    break;
-                case 'duplicate_text':
-                    violated = this.checkDuplicateText(message.content);
-                    break;
-                case 'character_count':
-                    violated = this.checkCharacterCount(message.content, rule.threshold || 2000);
-                    break;
-                case 'emoji_spam':
-                    violated = this.checkEmojiSpam(message.content, rule.threshold || 10);
-                    break;
-                case 'fast_message_spam':
-                    violated = await this.checkFastMessageSpam(message, rule.threshold || 5);
-                    break;
-                case 'image_spam':
-                    violated = await this.checkImageSpam(message, rule.threshold || 3);
-                    break;
-                case 'invite_links':
-                    violated = this.checkInviteLinks(message.content);
-                    break;
-                case 'phishing_links':
-                    violated = this.checkPhishingLinks(message.content);
-                    break;
-                case 'links':
-                    violated = this.checkLinks(message.content, message.guild.id, rule.threshold === 1);
-                    break;
-                case 'links_cooldown':
-                    violated = await this.checkLinksCooldown(message, rule.threshold || 3, rule.threshold_seconds || 30);
-                    break;
-                case 'mass_mentions':
-                    violated = this.checkMassMentions(message, rule.threshold || 5);
-                    break;
-                case 'mentions_cooldown':
-                    violated = await this.checkMentionsCooldown(message, rule.threshold || 5);
-                    break;
-                case 'spoilers':
-                    violated = this.checkSpoilers(message);
-                    break;
-                case 'masked_links':
-                    violated = this.checkMaskedLinks(message.content);
-                    break;
-                case 'stickers':
-                    violated = this.checkStickers(message);
-                    break;
-                case 'sticker_cooldown':
-                    violated = await this.checkStickerCooldown(message, rule.threshold || 3);
-                    break;
-                case 'zalgo':
-                    violated = this.checkZalgo(message.content);
-                    break;
-            }
-
-            if (violated) {
-                return { rule, violationData };
-            }
-        }
-
-        return null;
+    _checkZalgo(content) {
+        const combining = content.match(/[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g);
+        if (!combining) return false;
+        return combining.length > 15 || (combining.length / content.length) > 0.2;
     }
 }
 

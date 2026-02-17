@@ -8,6 +8,7 @@ class ScheduledTasks {
         console.log('[TASKS] Scheduled tasks module loaded');
         
         // Future scheduled tasks can be added here
+        // Example: periodic backups, statistics, announcements, etc.
     }
 }
 

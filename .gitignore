@@ -70,9 +70,6 @@ web_modules/
 .env.*
 !.env.example
 
-# Bot configuration (contains token)
-config.json
-
 # Database files
 data/
 *.db

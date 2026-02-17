@@ -1,339 +1,262 @@
+'use strict';
+
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+
+// Per-command help definitions. Each entry becomes a page when the user
+// passes the command name as the optional `command` argument.
+const PAGES = {
+    'automod-setup': {
+        title: '/automod-setup',
+        description: 'Create a new automod rule.',
+        fields: [
+            {
+                name: 'Required Options',
+                value: '`rule` — Type of rule to create\n`action` — What happens when the rule is triggered',
+            },
+            {
+                name: 'Optional Options',
+                value:
+                    '`threshold` — Trigger value (meaning depends on the rule type)\n' +
+                    '`violations` — How many violations before an auto-action fires (default: 3 for mute, 5 for ban)\n' +
+                    '`mute-duration` — Timeout length in seconds (default: 300)\n' +
+                    '`log-channel` — Override the default log channel for this rule\n' +
+                    '`custom-message` — Custom text for warn messages',
+            },
+            {
+                name: 'Rule Types with Thresholds',
+                value:
+                    '`all_caps` — % uppercase letters (default 70)\n' +
+                    '`newlines` — newline count (default 10)\n' +
+                    '`character_count` — max length (default 2000)\n' +
+                    '`emoji_spam` — emoji count (default 10)\n' +
+                    '`fast_message_spam` — messages in 5s (default 5)\n' +
+                    '`image_spam` — images in 10s (default 3)\n' +
+                    '`mass_mentions` — mentions per message (default 5)',
+            },
+            {
+                name: 'Examples',
+                value:
+                    '`/automod-setup rule:all_caps action:warn_delete threshold:80`\n' +
+                    '`/automod-setup rule:fast_message_spam action:auto_mute violations:3`\n' +
+                    '`/automod-setup rule:phishing_links action:instant_ban`',
+            },
+        ],
+    },
+    'automod-filter': {
+        title: '/automod-filter',
+        description: 'Scope a rule to specific roles or channels.',
+        fields: [
+            {
+                name: 'Subcommands',
+                value: '`add` — Add a filter\n`list` — List filters for a rule',
+            },
+            {
+                name: 'Filter Types',
+                value:
+                    '`affected` — Rule **only** applies to the specified role/channel\n' +
+                    '`ignored`  — Rule **never** applies to the specified role/channel',
+            },
+            {
+                name: 'Target Types',
+                value: '`role` — Filter by role\n`channel` — Filter by channel',
+            },
+            {
+                name: 'Examples',
+                value:
+                    '`/automod-filter add rule-id:1 filter-type:ignored target-type:role target-id:@Moderator`\n' +
+                    '`/automod-filter add rule-id:2 filter-type:affected target-type:channel target-id:#general`',
+            },
+            {
+                name: 'Tip',
+                value:
+                    'Adding an "affected" filter restricts the rule to only that role/channel. ' +
+                    'Adding an "ignored" filter exempts that role/channel while the rule still applies everywhere else.',
+            },
+        ],
+    },
+    'automod-badwords': {
+        title: '/automod-badwords',
+        description: 'Manage the list of filtered words and phrases.',
+        fields: [
+            {
+                name: 'Subcommands',
+                value: '`add` — Add a word\n`remove` — Remove a word\n`list` — View all words',
+            },
+            {
+                name: 'Match Types',
+                value:
+                    '`contains` — Triggers if the word appears anywhere in the message\n' +
+                    '`exact`    — Triggers only if the word is a standalone token\n' +
+                    '`wildcard` — Use `*` as a wildcard, e.g. `f*ck` matches `fck`, `f--k`, etc.',
+            },
+            {
+                name: 'Examples',
+                value:
+                    '`/automod-badwords add word:spam match-type:contains`\n' +
+                    '`/automod-badwords add word:badword match-type:exact`\n' +
+                    '`/automod-badwords remove word:spam`',
+            },
+            {
+                name: 'Note',
+                value: 'A `bad_words` automod rule must be enabled for the word list to have any effect.',
+            },
+        ],
+    },
+    'automod-links': {
+        title: '/automod-links',
+        description: 'Manage domain allowlists and blocklists.',
+        fields: [
+            {
+                name: 'Subcommands',
+                value: '`allow` — Add a domain to the allowlist\n`block` — Add a domain to the blocklist\n`list` — View all configured domains',
+            },
+            {
+                name: 'How it Works',
+                value:
+                    '**Blocklist** — Any URL whose hostname matches a blocked domain is flagged.\n' +
+                    '**Allowlist** — When the `links` rule is set to threshold 1 (allowlist mode), ' +
+                    'any URL not on the allowlist is flagged.',
+            },
+            {
+                name: 'Examples',
+                value:
+                    '`/automod-links allow domain:youtube.com`\n' +
+                    '`/automod-links block domain:scamsite.com`',
+            },
+        ],
+    },
+    'automod-settings': {
+        title: '/automod-settings',
+        description: 'Configure global automod settings.',
+        fields: [
+            {
+                name: 'Subcommands',
+                value:
+                    '`view` — Show current settings\n' +
+                    '`log-channel` — Set the default log channel for all rules\n' +
+                    '`ignore-role` — Add a globally ignored role\n' +
+                    '`ignore-channel` — Add a globally ignored channel',
+            },
+            {
+                name: 'Notes',
+                value:
+                    'Per-rule log channels override the global setting.\n' +
+                    'Server owner and administrators are always exempt regardless of ignore settings.',
+            },
+        ],
+    },
+    'automod-list': {
+        title: '/automod-list',
+        description: 'List all automod rules configured in this server.',
+        fields: [
+            {
+                name: 'Information Shown',
+                value:
+                    'Rule ID (used in other commands)\n' +
+                    'Rule type and enabled/disabled status\n' +
+                    'Configured action\n' +
+                    'Threshold and violation count values',
+            },
+        ],
+    },
+    'automod-toggle': {
+        title: '/automod-toggle',
+        description: 'Enable or disable an automod rule without deleting it.',
+        fields: [
+            {
+                name: 'Options',
+                value: '`rule-id` — ID of the rule (from `/automod-list`)\n`enabled` — `true` to enable, `false` to disable',
+            },
+            {
+                name: 'Example',
+                value: '`/automod-toggle rule-id:3 enabled:false`',
+            },
+        ],
+    },
+    'automod-remove': {
+        title: '/automod-remove',
+        description: 'Permanently delete an automod rule.',
+        fields: [
+            {
+                name: 'Options',
+                value: '`rule-id` — ID of the rule to delete (from `/automod-list`)',
+            },
+            {
+                name: 'Warning',
+                value: 'This is irreversible. All filters associated with the rule are also deleted.',
+            },
+        ],
+    },
+};
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('automod-help')
         .setDescription('Get help with automod commands')
-        .addStringOption(option =>
-            option.setName('command')
-                .setDescription('Specific command to get help with')
-                .setRequired(false)
-                .addChoices(
-                    { name: 'setup', value: 'setup' },
-                    { name: 'list', value: 'list' },
-                    { name: 'toggle', value: 'toggle' },
-                    { name: 'remove', value: 'remove' },
-                    { name: 'filter', value: 'filter' },
-                    { name: 'badwords', value: 'badwords' },
-                    { name: 'links', value: 'links' },
-                    { name: 'settings', value: 'settings' }
-                )),
+        .addStringOption(o => o
+            .setName('command')
+            .setDescription('Specific command to get help for')
+            .addChoices(
+                { name: '/automod-setup',    value: 'automod-setup'    },
+                { name: '/automod-filter',   value: 'automod-filter'   },
+                { name: '/automod-badwords', value: 'automod-badwords' },
+                { name: '/automod-links',    value: 'automod-links'    },
+                { name: '/automod-settings', value: 'automod-settings' },
+                { name: '/automod-list',     value: 'automod-list'     },
+                { name: '/automod-toggle',   value: 'automod-toggle'   },
+                { name: '/automod-remove',   value: 'automod-remove'   }
+            )),
 
     async execute(interaction) {
-        const command = interaction.options.getString('command');
+        const commandName = interaction.options.getString('command');
 
-        if (!command) {
-            // General help
+        if (commandName) {
+            const page = PAGES[commandName];
+            if (!page) {
+                return interaction.reply({ content: 'Help page not found.', ephemeral: true });
+            }
+
             const embed = new EmbedBuilder()
-                .setColor(0x0099ff)
-                .setTitle('📖 Automod Help')
-                .setDescription('Comprehensive automod command reference')
-                .addFields(
-                    {
-                        name: '🔧 Setup & Management',
-                        value:
-                            '`/automod-setup` — Create a new rule\n' +
-                            '`/automod-list` — View all rules\n' +
-                            '`/automod-toggle` — Enable/disable rules\n' +
-                            '`/automod-remove` — Delete a rule\n' +
-                            '`/automod-info` — System information'
-                    },
-                    {
-                        name: '🎯 Configuration',
-                        value:
-                            '`/automod-filter` — Rule filters (roles/channels)\n' +
-                            '`/automod-settings` — Global settings\n' +
-                            '`/automod-badwords` — Manage word filters\n' +
-                            '`/automod-links` — Manage link filters'
-                    },
-                    {
-                        name: '💡 Quick Tips',
-                        value:
-                            '• Use `/automod-help <command>` for detailed help\n' +
-                            '• Rules are checked in order of creation\n' +
-                            '• Violations expire after 5 minutes\n' +
-                            '• Server owner & admins are always ignored'
-                    },
-                    {
-                        name: '🚀 Quick Start',
-                        value:
-                            '1. Set log channel: `/automod-settings log-channel`\n' +
-                            '2. Create rule: `/automod-setup rule:all_caps action:warn_delete`\n' +
-                            '3. Test it: Send an ALL CAPS MESSAGE\n' +
-                            '4. View rules: `/automod-list`'
-                    }
-                );
+                .setColor(0x5865F2)
+                .setTitle(page.title)
+                .setDescription(page.description)
+                .addFields(page.fields);
 
-            return await interaction.reply({ embeds: [embed], ephemeral: true });
+            return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
-        // Specific command help
-        let embed;
+        // Overview
+        const embed = new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle('Automod Help')
+            .setDescription('Use `/automod-help command:<name>` for detailed help on any command.')
+            .addFields(
+                {
+                    name: 'Setup & Management',
+                    value:
+                        '`/automod-setup` — Create a new rule\n' +
+                        '`/automod-list` — View all rules\n' +
+                        '`/automod-toggle` — Enable or disable a rule\n' +
+                        '`/automod-remove` — Delete a rule\n' +
+                        '`/automod-info` — System overview',
+                },
+                {
+                    name: 'Configuration',
+                    value:
+                        '`/automod-filter` — Per-rule role and channel scoping\n' +
+                        '`/automod-settings` — Global settings\n' +
+                        '`/automod-badwords` — Manage the word filter list\n' +
+                        '`/automod-links` — Manage domain filters',
+                },
+                {
+                    name: 'Quick Start',
+                    value:
+                        '`/automod-settings log-channel channel:#mod-logs`\n' +
+                        '`/automod-setup rule:all_caps action:warn_delete`\n' +
+                        '`/automod-setup rule:fast_message_spam action:auto_mute violations:3`',
+                }
+            );
 
-        switch (command) {
-            case 'setup':
-                embed = new EmbedBuilder()
-                    .setColor(0x00ff00)
-                    .setTitle('📝 /automod-setup')
-                    .setDescription('Create a new automod rule')
-                    .addFields(
-                        {
-                            name: 'Required Options',
-                            value:
-                                '• `rule` — Type of rule (see below)\n' +
-                                '• `action` — What happens when violated'
-                        },
-                        {
-                            name: 'Optional Settings',
-                            value:
-                                '• `threshold` — Trigger value (depends on rule)\n' +
-                                '• `violations` — Count before auto-action (default: 3 for mute, 5 for ban)\n' +
-                                '• `mute-duration` — Timeout length in seconds (default: 300)\n' +
-                                '• `log-channel` — Override default log channel\n' +
-                                '• `custom-message` — Custom warning text'
-                        },
-                        {
-                            name: 'Rule Types with Thresholds',
-                            value:
-                                '• `all_caps` — % of caps (default: 70)\n' +
-                                '• `newlines` — Number of newlines (default: 10)\n' +
-                                '• `character_count` — Max message length (default: 2000)\n' +
-                                '• `emoji_spam` — Max emojis (default: 10)\n' +
-                                '• `fast_message_spam` — Messages in 5s (default: 5)\n' +
-                                '• `image_spam` — Images in 10s (default: 3)\n' +
-                                '• `mass_mentions` — Max mentions (default: 5)'
-                        },
-                        {
-                            name: 'Examples',
-                            value:
-                                '```\n' +
-                                '/automod-setup rule:all_caps action:warn_delete threshold:80\n\n' +
-                                '/automod-setup rule:fast_message_spam action:auto_mute violations:3\n\n' +
-                                '/automod-setup rule:phishing_links action:instant_ban\n' +
-                                '```'
-                        }
-                    );
-                break;
-
-            case 'filter':
-                embed = new EmbedBuilder()
-                    .setColor(0x9900ff)
-                    .setTitle('🎯 /automod-filter')
-                    .setDescription('Configure which roles/channels a rule applies to')
-                    .addFields(
-                        {
-                            name: 'Filter Types',
-                            value:
-                                '• `affected` — Rule ONLY applies to these\n' +
-                                '• `ignored` — Rule does NOT apply to these'
-                        },
-                        {
-                            name: 'Target Types',
-                            value:
-                                '• `role` — Filter by role\n' +
-                                '• `channel` — Filter by channel'
-                        },
-                        {
-                            name: 'Examples',
-                            value:
-                                '```\n' +
-                                '# Only apply to #general\n' +
-                                '/automod-filter add rule-id:1 filter-type:affected target-type:channel target-id:#general\n\n' +
-                                '# Ignore moderators\n' +
-                                '/automod-filter add rule-id:1 filter-type:ignored target-type:role target-id:@Moderator\n\n' +
-                                '# View filters\n' +
-                                '/automod-filter list rule-id:1\n' +
-                                '```'
-                        },
-                        {
-                            name: '💡 Tip',
-                            value: 'Get rule IDs from `/automod-list`'
-                        }
-                    );
-                break;
-
-            case 'badwords':
-                embed = new EmbedBuilder()
-                    .setColor(0xff0000)
-                    .setTitle('🚫 /automod-badwords')
-                    .setDescription('Manage filtered words and phrases')
-                    .addFields(
-                        {
-                            name: 'Match Types',
-                            value:
-                                '• `contains` — Matches anywhere in message\n' +
-                                '  Example: "bad" matches "badword", "not bad", etc.\n\n' +
-                                '• `exact` — Must be a separate word\n' +
-                                '  Example: "bad" matches "this is bad" but not "badword"\n\n' +
-                                '• `wildcard` — Use * for any characters\n' +
-                                '  Example: "bad*word" matches "badword", "bad123word", etc.'
-                        },
-                        {
-                            name: 'Examples',
-                            value:
-                                '```\n' +
-                                '# Add word (contains)\n' +
-                                '/automod-badwords add word:spam match-type:contains\n\n' +
-                                '# Add exact match\n' +
-                                '/automod-badwords add word:noob match-type:exact\n\n' +
-                                '# Add wildcard\n' +
-                                '/automod-badwords add word:f*ck match-type:wildcard\n\n' +
-                                '# View list\n' +
-                                '/automod-badwords list\n\n' +
-                                '# Remove word\n' +
-                                '/automod-badwords remove word:spam\n' +
-                                '```'
-                        },
-                        {
-                            name: '⚠️ Important',
-                            value: 'You must create a "Bad Words" rule with `/automod-setup` for this to work!'
-                        }
-                    );
-                break;
-
-            case 'links':
-                embed = new EmbedBuilder()
-                    .setColor(0x0099ff)
-                    .setTitle('🔗 /automod-links')
-                    .setDescription('Manage link allowlists and blocklists')
-                    .addFields(
-                        {
-                            name: 'How It Works',
-                            value:
-                                '• **Blocklist** — Specific domains to block\n' +
-                                '• **Allowlist** — Only these domains allowed (set rule threshold to 1)'
-                        },
-                        {
-                            name: 'Examples',
-                            value:
-                                '```\n' +
-                                '# Block a domain\n' +
-                                '/automod-links block domain:scamsite.com\n\n' +
-                                '# Allow safe domains\n' +
-                                '/automod-links allow domain:youtube.com\n' +
-                                '/automod-links allow domain:twitter.com\n\n' +
-                                '# View all\n' +
-                                '/automod-links list\n' +
-                                '```'
-                        },
-                        {
-                            name: 'Using Allowlist Mode',
-                            value:
-                                '1. Add allowed domains with `/automod-links allow`\n' +
-                                '2. Create rule: `/automod-setup rule:links action:delete threshold:1`\n' +
-                                '3. Now only allowed domains work!'
-                        }
-                    );
-                break;
-
-            case 'settings':
-                embed = new EmbedBuilder()
-                    .setColor(0xffaa00)
-                    .setTitle('⚙️ /automod-settings')
-                    .setDescription('Configure global automod settings')
-                    .addFields(
-                        {
-                            name: 'Available Settings',
-                            value:
-                                '• `log-channel` — Default log channel for all rules\n' +
-                                '• `ignore-role` — Add globally ignored role\n' +
-                                '• `ignore-channel` — Add globally ignored channel\n' +
-                                '• `view` — View current settings'
-                        },
-                        {
-                            name: 'Examples',
-                            value:
-                                '```\n' +
-                                '# Set log channel\n' +
-                                '/automod-settings log-channel channel:#mod-logs\n\n' +
-                                '# Ignore moderators globally\n' +
-                                '/automod-settings ignore-role role:@Moderator\n\n' +
-                                '# Ignore staff channel\n' +
-                                '/automod-settings ignore-channel channel:#staff-chat\n\n' +
-                                '# View settings\n' +
-                                '/automod-settings view\n' +
-                                '```'
-                        },
-                        {
-                            name: 'Always Ignored',
-                            value: 'Server owner, administrators, and Dyno roles are always ignored'
-                        }
-                    );
-                break;
-
-            case 'list':
-                embed = new EmbedBuilder()
-                    .setColor(0x00aaff)
-                    .setTitle('📋 /automod-list')
-                    .setDescription('View all configured automod rules')
-                    .addFields(
-                        {
-                            name: 'What It Shows',
-                            value:
-                                '• Rule ID (use for other commands)\n' +
-                                '• Rule type and status\n' +
-                                '• Configured action\n' +
-                                '• Threshold values\n' +
-                                '• Violation counts'
-                        },
-                        {
-                            name: 'Example Output',
-                            value:
-                                '```\n' +
-                                '1. All Caps\n' +
-                                '   Action: Warn + Delete\n' +
-                                '   Threshold: 70\n' +
-                                '   Status: ✅ Enabled\n' +
-                                '```'
-                        }
-                    );
-                break;
-
-            case 'toggle':
-                embed = new EmbedBuilder()
-                    .setColor(0xffaa00)
-                    .setTitle('🔄 /automod-toggle')
-                    .setDescription('Enable or disable a rule without deleting it')
-                    .addFields(
-                        {
-                            name: 'Usage',
-                            value: '`/automod-toggle rule-id:<id> enabled:<true/false>`'
-                        },
-                        {
-                            name: 'Examples',
-                            value:
-                                '```\n' +
-                                '# Disable rule #1\n' +
-                                '/automod-toggle rule-id:1 enabled:false\n\n' +
-                                '# Re-enable rule #1\n' +
-                                '/automod-toggle rule-id:1 enabled:true\n' +
-                                '```'
-                        }
-                    );
-                break;
-
-            case 'remove':
-                embed = new EmbedBuilder()
-                    .setColor(0xff0000)
-                    .setTitle('🗑️ /automod-remove')
-                    .setDescription('Permanently delete an automod rule')
-                    .addFields(
-                        {
-                            name: 'Usage',
-                            value: '`/automod-remove rule-id:<id>`'
-                        },
-                        {
-                            name: 'Example',
-                            value: '```\n/automod-remove rule-id:1\n```'
-                        },
-                        {
-                            name: '⚠️ Warning',
-                            value: 'This permanently deletes the rule. Use `/automod-toggle` to temporarily disable instead.'
-                        }
-                    );
-                break;
-        }
-
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    }
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+    },
 };
