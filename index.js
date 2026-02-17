@@ -1,16 +1,23 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
-const { token } = require('./config.json');
+require('dotenv').config();
+
+// Validate required environment variables
+if (!process.env.DISCORD_TOKEN) {
+    console.error('[ERROR] DISCORD_TOKEN is not set in .env file');
+    process.exit(1);
+}
 
 // Create a new client instance with necessary intents
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, // REQUIRED for welcome messages and auto-roles
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMessageReactions, // REQUIRED for suggestion voting
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildModeration, // For ban/kick logs
     ],
 });
 
@@ -27,13 +34,17 @@ for (const folder of commandFolders) {
     
     for (const file of commandFiles) {
         const filePath = path.join(commandsPath, file);
-        const command = require(filePath);
-        
-        if ('data' in command && 'execute' in command) {
-            client.commands.set(command.data.name, command);
-            console.log(`Loaded command: ${command.data.name}`);
-        } else {
-            console.log(`[WARNING] The command at ${filePath} is missing "data" or "execute" property.`);
+        try {
+            const command = require(filePath);
+            
+            if ('data' in command && 'execute' in command) {
+                client.commands.set(command.data.name, command);
+                console.log(`[LOAD] Command loaded: ${command.data.name}`);
+            } else {
+                console.warn(`[WARN] Command at ${filePath} is missing "data" or "execute" property`);
+            }
+        } catch (error) {
+            console.error(`[ERROR] Failed to load command at ${filePath}:`, error);
         }
     }
 }
@@ -44,59 +55,79 @@ const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'
 
 for (const file of eventFiles) {
     const filePath = path.join(eventsPath, file);
-    const event = require(filePath);
-    
-    // Handle both single event exports and array exports
-    const events = Array.isArray(event) ? event : [event];
-    
-    for (const evt of events) {
-        if (evt.once) {
-            client.once(evt.name, (...args) => evt.execute(...args));
-        } else {
-            client.on(evt.name, (...args) => evt.execute(...args));
+    try {
+        const event = require(filePath);
+        
+        // Handle both single event exports and array exports
+        const events = Array.isArray(event) ? event : [event];
+        
+        for (const evt of events) {
+            if (evt.once) {
+                client.once(evt.name, (...args) => evt.execute(...args));
+            } else {
+                client.on(evt.name, (...args) => evt.execute(...args));
+            }
+            console.log(`[LOAD] Event loaded: ${evt.name}${evt.once ? ' (once)' : ''}`);
         }
-        console.log(`Loaded event: ${evt.name}`);
+    } catch (error) {
+        console.error(`[ERROR] Failed to load event at ${filePath}:`, error);
     }
 }
 
 // Initialize scheduled tasks after bot is ready
 client.once('ready', () => {
-    console.log(`✅ Logged in as ${client.user.tag}`);
-    console.log(`📊 Serving ${client.guilds.cache.size} server(s)`);
-    console.log(`👥 Connected to ${client.users.cache.size} users`);
+    console.log(`[READY] Logged in as ${client.user.tag}`);
+    console.log(`[READY] Serving ${client.guilds.cache.size} guild(s)`);
+    console.log(`[READY] Connected to ${client.users.cache.size} user(s)`);
     
-    const ScheduledTasks = require('./utils/scheduledTasks');
-    new ScheduledTasks(client);
-    console.log('[SCHEDULED] Automated tasks initialized');
+    try {
+        const ScheduledTasks = require('./utils/scheduledTasks');
+        new ScheduledTasks(client);
+        console.log('[READY] Automated tasks initialized');
+    } catch (error) {
+        console.error('[ERROR] Failed to initialize scheduled tasks:', error);
+    }
 });
 
 // Error handling
 client.on('error', (error) => {
-    console.error('Discord client error:', error);
+    console.error('[ERROR] Discord client error:', error);
 });
 
 // Warning handler
 client.on('warn', (warning) => {
-    console.warn('Discord client warning:', warning);
+    console.warn('[WARN] Discord client warning:', warning);
 });
 
 // Unhandled promise rejection handler
 process.on('unhandledRejection', (error) => {
-    console.error('Unhandled promise rejection:', error);
+    console.error('[ERROR] Unhandled promise rejection:', error);
+});
+
+// Uncaught exception handler
+process.on('uncaughtException', (error) => {
+    console.error('[FATAL] Uncaught exception:', error);
+    process.exit(1);
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\n[SHUTDOWN] Received SIGINT, shutting down gracefully...');
-    client.destroy();
-    process.exit(0);
-});
+const shutdown = async (signal) => {
+    console.log(`\n[SHUTDOWN] Received ${signal}, shutting down gracefully...`);
+    try {
+        await client.destroy();
+        console.log('[SHUTDOWN] Discord client destroyed');
+        process.exit(0);
+    } catch (error) {
+        console.error('[ERROR] Error during shutdown:', error);
+        process.exit(1);
+    }
+};
 
-process.on('SIGTERM', () => {
-    console.log('\n[SHUTDOWN] Received SIGTERM, shutting down gracefully...');
-    client.destroy();
-    process.exit(0);
-});
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Login to Discord
-client.login(token);
+client.login(process.env.DISCORD_TOKEN).catch(error => {
+    console.error('[FATAL] Failed to login:', error);
+    process.exit(1);
+});

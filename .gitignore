@@ -73,6 +73,12 @@ web_modules/
 # Bot configuration (contains token)
 config.json
 
+# Database files
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
