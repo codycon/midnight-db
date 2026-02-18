@@ -120,6 +120,7 @@ if (failed === 0) {
   console.log("2. npm start");
 } else {
   console.log("\nPlease fix the issues above before running the bot.");
+  console.log("\nFor help, see SETUP.md");
 }
 
 process.exit(failed > 0 ? 1 : 0);

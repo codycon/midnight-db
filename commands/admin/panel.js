@@ -466,11 +466,21 @@ module.exports = {
 
   async _embedRemove(interaction) {
     const embedId = interaction.options.getInteger("embed-id");
-    const result = tdb.deleteEmbed(embedId);
 
-    if (!result.changes) {
+    // Verify the embed belongs to a panel in this guild before deleting
+    const embed = tdb.db
+      .prepare(
+        `SELECT e.id, p.guild_id FROM ticket_panel_embeds e
+         JOIN ticket_panels p ON e.panel_id = p.id
+         WHERE e.id = ?`,
+      )
+      .get(embedId);
+
+    if (!embed || embed.guild_id !== interaction.guild.id) {
       return interaction.editReply({ content: "Embed not found." });
     }
+
+    tdb.deleteEmbed(embedId);
     return interaction.editReply({ content: `Embed #${embedId} removed.` });
   },
 
@@ -521,6 +531,14 @@ module.exports = {
       return interaction.editReply({ content: "Option not found." });
     }
 
+    // Verify the option belongs to a panel in this guild
+    const panel = tdb.db
+      .prepare("SELECT guild_id FROM ticket_panels WHERE id = ?")
+      .get(option.panel_id);
+    if (!panel || panel.guild_id !== interaction.guild.id) {
+      return interaction.editReply({ content: "Option not found." });
+    }
+
     const updates = {};
     if (category) updates.category_id = category.id;
     if (supportRaw)
@@ -560,6 +578,14 @@ module.exports = {
       return interaction.editReply({ content: "Option not found." });
     }
 
+    // Verify the option belongs to a panel in this guild
+    const panel = tdb.db
+      .prepare("SELECT guild_id FROM ticket_panels WHERE id = ?")
+      .get(option.panel_id);
+    if (!panel || panel.guild_id !== interaction.guild.id) {
+      return interaction.editReply({ content: "Option not found." });
+    }
+
     tdb.deleteOption(optionId);
     return interaction.editReply({
       content: `Option **"${option.label}"** removed.`,
@@ -577,6 +603,15 @@ module.exports = {
     if (!option) {
       return interaction.editReply({ content: "Option not found." });
     }
+
+    // Verify the option belongs to a panel in this guild
+    const panel = tdb.db
+      .prepare("SELECT guild_id FROM ticket_panels WHERE id = ?")
+      .get(option.panel_id);
+    if (!panel || panel.guild_id !== interaction.guild.id) {
+      return interaction.editReply({ content: "Option not found." });
+    }
+
     if (option.questions.length >= 5) {
       return interaction.editReply({
         content: "Options can have at most 5 questions (Discord modal limit).",
@@ -602,11 +637,22 @@ module.exports = {
 
   async _questionRemove(interaction) {
     const questionId = interaction.options.getInteger("question-id");
-    const result = tdb.deleteQuestion(questionId);
 
-    if (!result.changes) {
+    // Verify the question belongs to this guild via option → panel chain
+    const row = tdb.db
+      .prepare(
+        `SELECT q.id, p.guild_id FROM ticket_option_questions q
+         JOIN ticket_panel_options o ON q.option_id = o.id
+         JOIN ticket_panels p ON o.panel_id = p.id
+         WHERE q.id = ?`,
+      )
+      .get(questionId);
+
+    if (!row || row.guild_id !== interaction.guild.id) {
       return interaction.editReply({ content: "Question not found." });
     }
+
+    tdb.deleteQuestion(questionId);
     return interaction.editReply({
       content: `Question #${questionId} removed.`,
     });

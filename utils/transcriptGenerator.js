@@ -140,13 +140,11 @@ class TranscriptGenerator {
       time.toLocaleString("en-US", { hour12: false, timeZone: "UTC" }) + " UTC";
     const avatar = m.authorAvatar ?? this._defaultAvatar(m.authorId);
 
-    // Build content: escape HTML first, then linkify, then apply markdown.
-    // Order matters: escape must come first so user content can't inject HTML.
-    // Linkify must come BEFORE markdown so URLs inside bold/italic still render.
-    // However the markdown regexes operate on escaped text and produce HTML,
-    // so linkify can safely run after escaping and before markdown tags are inserted.
+    // Build content: linkify raw URLs first, then escape HTML, then apply markdown.
+    // Linkify runs on raw content so URLs with & and other special chars are captured
+    // intact. _esc then escapes the non-URL portions. _applyMarkdown runs last.
     const content = m.content
-      ? this._applyMarkdown(this._linkify(this._esc(m.content)))
+      ? this._applyMarkdown(this._escWithLinks(m.content))
       : "";
 
     const attachmentsHtml = (m.attachments ?? [])
@@ -212,15 +210,24 @@ class TranscriptGenerator {
   }
 
   /**
-   * Turns http(s) URLs in already-escaped text into anchor tags.
-   * Runs before _applyMarkdown so URLs inside bold/italic text still link correctly.
+   * Finds URLs in raw (unescaped) text, wraps them in anchor tags, and HTML-escapes
+   * everything else. This avoids the previous bug where _esc converted & to &amp;
+   * before _linkify ran, breaking URLs with query parameters.
    */
-  _linkify(str) {
-    // The URL in escaped text will use &amp; etc, so we match the raw URL characters.
-    return str.replace(
-      /(https?:\/\/[^\s<>&"]+)/g,
-      '<a href="$1" target="_blank" rel="noopener">$1</a>',
-    );
+  _escWithLinks(str) {
+    if (!str) return "";
+    const urlPattern = /(https?:\/\/[^\s<>"]+)/g;
+    const parts = str.split(urlPattern);
+    return parts
+      .map((part, i) => {
+        // Odd indices are captured URL groups
+        if (i % 2 === 1) {
+          const escaped = this._esc(part);
+          return `<a href="${escaped}" target="_blank" rel="noopener">${escaped}</a>`;
+        }
+        return this._esc(part);
+      })
+      .join("");
   }
 
   /**

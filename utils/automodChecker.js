@@ -36,9 +36,12 @@ class AutomodChecker {
    * @returns {Promise<{ rule: object } | null>}
    */
   async checkMessage(message) {
+    // member can be null in rare edge cases (uncached, partial, etc.)
+    if (!message.member) return null;
+
     const settings = db.getSettings(message.guild.id);
 
-    if (await this._shouldIgnore(message, settings)) return null;
+    if (this._shouldIgnore(message, settings)) return null;
 
     const rules = db.getRules(message.guild.id);
 
@@ -57,7 +60,7 @@ class AutomodChecker {
   // Permission / filter checks
   // -------------------------------------------------------------------------
 
-  async _shouldIgnore(message, settings) {
+  _shouldIgnore(message, settings) {
     if (message.author.bot) return true;
     if (message.guild.ownerId === message.author.id) return true;
     if (message.member.permissions.has(PermissionFlagsBits.Administrator))
@@ -203,8 +206,15 @@ class AutomodChecker {
       if (entry.match_type === "exact") {
         if (lower.split(/\s+/).includes(entry.word)) return true;
       } else if (entry.match_type === "wildcard") {
-        const pattern = entry.word.replace(/\*/g, ".*");
-        if (new RegExp(pattern, "i").test(content)) return true;
+        // Escape all regex special characters EXCEPT *, then replace * with .*
+        const escaped = entry.word.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = escaped.replace(/\*/g, ".*");
+        try {
+          if (new RegExp(pattern, "i").test(content)) return true;
+        } catch {
+          // If the pattern is still somehow invalid, fall back to contains
+          if (lower.includes(entry.word.replace(/\*/g, ""))) return true;
+        }
       } else {
         if (lower.includes(entry.word)) return true;
       }

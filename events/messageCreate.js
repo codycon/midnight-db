@@ -8,15 +8,15 @@ const tdb = require("../utils/ticketDatabase");
  *   1. Run automod checks on every guild message.
  *   2. Track messages inside open ticket channels/threads for transcript generation.
  *
- * Keeping both here avoids registering two separate listeners for the same event,
- * which makes the execution order explicit and easier to reason about.
+ * This is the ONLY MessageCreate listener — ticketTracker.js was removed to prevent
+ * duplicate message tracking in the database.
  */
 module.exports = {
   name: Events.MessageCreate,
   async execute(message) {
     if (!message.guild) return;
 
-    // Automod
+    // --- Automod ---
     if (!message.author.bot) {
       try {
         const violation = await automodChecker.checkMessage(message);
@@ -31,9 +31,11 @@ module.exports = {
       }
     }
 
-    // Ticket message tracking (transcript fallback)
-    // Skip bot messages; we still track even if automod deleted the content
-    // because the DB write happens before any deletion.
+    // --- Ticket message tracking (transcript fallback) ---
+    // Skip the bot's own messages to avoid polluting transcripts with system embeds
+    // that are already captured by the opener message and close message.
+    if (message.author.id === message.client.user.id) return;
+
     const ticket = tdb.getTicketByChannel(message.channel.id);
     if (!ticket || ticket.status !== "open") return;
 

@@ -108,6 +108,20 @@ module.exports = {
       });
     }
 
+    // Check for duplicate before inserting
+    const existing = db.db
+      .prepare(
+        `SELECT id FROM automod_filters
+         WHERE rule_id = ? AND filter_type = ? AND target_type = ? AND target_id = ?`,
+      )
+      .get(ruleId, filterType, targetType, targetId);
+
+    if (existing) {
+      return interaction.editReply({
+        content: "That filter already exists on this rule.",
+      });
+    }
+
     db.addFilter(ruleId, filterType, targetType, targetId);
 
     const embed = new EmbedBuilder()

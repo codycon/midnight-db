@@ -189,6 +189,13 @@ module.exports = {
     }
 
     const target = interaction.options.getMember("user");
+    if (!target) {
+      return interaction.reply({
+        content: "User not found in this server.",
+        ephemeral: true,
+      });
+    }
+
     const channel = interaction.channel;
 
     try {
@@ -232,6 +239,12 @@ module.exports = {
     }
 
     const target = interaction.options.getMember("user");
+    if (!target) {
+      return interaction.reply({
+        content: "User not found in this server.",
+        ephemeral: true,
+      });
+    }
 
     if (target.id === ticket.user_id) {
       return interaction.reply({

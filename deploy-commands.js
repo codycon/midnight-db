@@ -3,8 +3,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 require("dotenv").config();
 
-// Stub out runtime-only modules so commands can be loaded just for their
-// slash-command schema without needing the database or Discord client.
+// ─── Stub out runtime-only modules so commands can be loaded just for their
+//     slash-command schema without needing the database or Discord client. ───
 const Module = require("module");
 const _originalLoad = Module._load;
 const STUBS = [

@@ -65,11 +65,9 @@ async function handleButton(interaction) {
     return manager.createTicket(interaction, panel, option, {});
   }
 
-  if (customId.startsWith(CUSTOM_IDS.TICKET_CLOSE)) {
-    const ticketId = Number(customId.split(":")[1]);
-    return manager.closeTicket(interaction, ticketId, false);
-  }
-
+  // IMPORTANT: Check more specific prefixes FIRST.
+  // "ticket_close_confirm" and "ticket_close_cancel" both startsWith("ticket_close"),
+  // so the generic TICKET_CLOSE handler must come LAST or it will intercept the others.
   if (customId.startsWith(CUSTOM_IDS.TICKET_CLOSE_CONFIRM)) {
     const ticketId = Number(customId.split(":")[1]);
     return manager.closeTicket(interaction, ticketId, true);
@@ -77,6 +75,11 @@ async function handleButton(interaction) {
 
   if (customId === CUSTOM_IDS.TICKET_CLOSE_CANCEL) {
     return interaction.update({ content: "Close cancelled.", components: [] });
+  }
+
+  if (customId.startsWith(CUSTOM_IDS.TICKET_CLOSE)) {
+    const ticketId = Number(customId.split(":")[1]);
+    return manager.closeTicket(interaction, ticketId, false);
   }
 
   if (customId.startsWith(CUSTOM_IDS.TICKET_STAFF_THREAD)) {
